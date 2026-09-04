@@ -1,0 +1,542 @@
+'use client';
+
+import { useState, useMemo, useCallback } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
+import { useToast } from '@/hooks/use-toast';
+import {
+  filtrarConfiguraciones,
+  calcularPrecio,
+  calcularRanking,
+  formatearPrecio,
+  formatearTiempo,
+  type ConfiguracionConDatos,
+} from '@/lib/calculos/envios';
+import type {
+  Tag, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio,
+} from '@/lib/types/database';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import {
+  Accordion, AccordionContent, AccordionItem, AccordionTrigger,
+} from '@/components/ui/accordion';
+import { EmptyState } from '@/components/layout/EmptyState';
+import {
+  Search, ArrowLeftRight, Package, Truck, Clock,
+  Star, DollarSign, Loader2, CheckCircle2, Info, Minus, Plus,
+} from 'lucide-react';
+
+// ─── Constantes ───────────────────────────────────────────────────────────────
+
+// Valores discretos permitidos para pallets — evita problemas de punto flotante
+const OPCIONES_PALLETS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+
+type OrdenCriterio = 'recomendado' | 'precio' | 'tiempo';
+
+interface PerfilDefaults {
+  origen_predeterminado_provincia: string | null;
+  origen_predeterminado_localidad: string | null;
+  destino_predeterminado_provincia: string | null;
+  destino_predeterminado_localidad: string | null;
+}
+
+interface EnviosClientProps {
+  configuracionesRaw: unknown[];
+  tagsDisponibles: Tag[];
+  perfilDefaults: PerfilDefaults | null;
+  userId: string | null;
+}
+
+function buildUbicacion(p: string | null, l: string | null): UbicacionSeleccionada | null {
+  if (!p) return null;
+  return { provincia: p, localidad: l ?? null };
+}
+
+function labelPallets(n: number): string {
+  if (n === 0.5) return '½ pallet';
+  if (n === 1) return '1 pallet';
+  if (n === 1.5) return '1½ pallets';
+  if (Number.isInteger(n)) return `${n} pallets`;
+  return `${n} pallets`;
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
+
+export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaults, userId }: EnviosClientProps) {
+  const { toast } = useToast();
+  const supabase = createClient();
+
+  // ── Formulario ─────────────────────────────────────────────────────────────
+  const [origen, setOrigen] = useState<UbicacionSeleccionada | null>(
+    buildUbicacion(perfilDefaults?.origen_predeterminado_provincia ?? null, perfilDefaults?.origen_predeterminado_localidad ?? null)
+  );
+  const [destino, setDestino] = useState<UbicacionSeleccionada | null>(
+    buildUbicacion(perfilDefaults?.destino_predeterminado_provincia ?? null, perfilDefaults?.destino_predeterminado_localidad ?? null)
+  );
+
+  // Bultos: activado/desactivado + cantidad (número libre)
+  const [incluyeBultos, setIncluyeBultos] = useState(false);
+  const [cantBultosStr, setCantBultosStr] = useState('1'); // string para no limpiar el input
+
+  // Pallets: activado/desactivado + valor discreto del preset
+  const [incluyePallets, setIncluyePallets] = useState(false);
+  const [cantPallets, setCantPallets] = useState<number>(1); // índice del preset
+
+  // Camión completo
+  const [camionCompleto, setCamionCompleto] = useState(false);
+  // Peritoneal
+  const [soloPeritoneal, setSoloPeritoneal] = useState(false);
+
+  // ── Resultados ─────────────────────────────────────────────────────────────
+  const [resultados, setResultados] = useState<ResultadoEnvio[] | null>(null);
+  const [buscando, setBuscando] = useState(false);
+  const [orden, setOrden] = useState<OrdenCriterio>('recomendado');
+  const [filtroTags, setFiltroTags] = useState<string[]>([]);
+  const [elegidoId, setElegidoId] = useState<string | null>(null);
+  const [guardando, setGuardando] = useState(false);
+
+  function swap() {
+    const tmp = origen; setOrigen(destino); setDestino(tmp);
+  }
+
+  // ── Validar cantidad de bultos ─────────────────────────────────────────────
+  const cantBultosNum = Math.max(1, parseInt(cantBultosStr) || 1);
+
+  // ── Buscar ─────────────────────────────────────────────────────────────────
+  const buscar = useCallback(() => {
+    if (!origen?.provincia) { toast({ variant: 'destructive', title: 'Seleccioná el origen.' }); return; }
+    if (!destino?.provincia) { toast({ variant: 'destructive', title: 'Seleccioná el destino.' }); return; }
+    if (!incluyeBultos && !incluyePallets && !camionCompleto) {
+      toast({ variant: 'destructive', title: 'Indicá al menos un tipo de carga.' });
+      return;
+    }
+
+    setBuscando(true);
+    setElegidoId(null);
+    setFiltroTags([]);
+
+    try {
+      const busqueda: BusquedaEnvio = {
+        origen: origen!,
+        destino: destino!,
+        cantidadBultos: incluyeBultos ? cantBultosNum : 0,
+        cantidadPallets: incluyePallets ? cantPallets : 0,
+        camionCompleto,
+        soloPeritoneal,
+      };
+      const configs = configuracionesRaw as ConfiguracionConDatos[];
+      const candidatos = filtrarConfiguraciones(configs, busqueda);
+      const conPrecios = candidatos.map((config) => ({
+        config,
+        desglose: calcularPrecio(config, busqueda),
+      }));
+      setResultados(calcularRanking(conPrecios));
+      setOrden('recomendado');
+    } catch {
+      toast({ variant: 'destructive', title: 'Error al calcular resultados.' });
+    } finally {
+      setBuscando(false);
+    }
+  }, [origen, destino, incluyeBultos, cantBultosNum, incluyePallets, cantPallets, camionCompleto, configuracionesRaw, toast]);
+
+  // ── Ordenar / filtrar resultados ───────────────────────────────────────────
+  const resultadosOrdenados = useMemo(() => {
+    if (!resultados) return [];
+    let filtrados = resultados;
+    if (filtroTags.length > 0) {
+      filtrados = resultados.filter((r) => filtroTags.some((id) => r.tags.some((t) => t.id === id)));
+    }
+    if (orden === 'precio') return [...filtrados].sort((a, b) => a.precioTotal - b.precioTotal);
+    if (orden === 'tiempo') {
+      return [...filtrados].sort((a, b) => {
+        const ta = ((a.tiempoMin ?? 0) + (a.tiempoMax ?? a.tiempoMin ?? 0)) / 2;
+        const tb = ((b.tiempoMin ?? 0) + (b.tiempoMax ?? b.tiempoMin ?? 0)) / 2;
+        return ta - tb;
+      });
+    }
+    return filtrados;
+  }, [resultados, orden, filtroTags]);
+
+  // ── Guardar historial ──────────────────────────────────────────────────────
+  async function elegirYGuardar(resultado: ResultadoEnvio) {
+    setElegidoId(resultado.configuracion.id);
+    if (!userId) return;
+    setGuardando(true);
+    const tipoEnvio = camionCompleto ? 'camion_completo'
+      : incluyeBultos && incluyePallets ? 'mixto'
+      : incluyeBultos ? 'bultos' : 'pallet';
+    await supabase.from('historial_calculos').insert({
+      usuario_id: userId,
+      origen_provincia: origen!.provincia,
+      origen_localidad: origen!.localidad ?? null,
+      destino_provincia: destino!.provincia,
+      destino_localidad: destino!.localidad ?? null,
+      tipo_envio: tipoEnvio,
+      cantidad: incluyeBultos ? cantBultosNum : incluyePallets ? cantPallets : null,
+      transporte_elegido_id: resultado.transporte.id,
+      precio_resultado: resultado.precioTotal,
+    });
+    setGuardando(false);
+    toast({
+      title: `${resultado.transporte.razon_social} seleccionado`,
+      description: `${formatearPrecio(resultado.precioTotal)} · ${formatearTiempo(resultado.tiempoMin, resultado.tiempoMax)}`,
+    });
+  }
+
+  const tagsEnResultados = useMemo(() => {
+    if (!resultados) return [];
+    const ids = new Set(resultados.flatMap((r) => (r.tags ?? []).map((t) => t.id)));
+    return tagsDisponibles.filter((t) => ids.has(t.id));
+  }, [resultados, tagsDisponibles]);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  return (
+    <div className="space-y-6">
+      <div className="bg-white border rounded-xl p-5 shadow-sm space-y-4">
+
+        {/* Origen / Destino */}
+        <div className="flex flex-col sm:flex-row gap-3 items-end">
+          <div className="flex-1">
+            <GeorefCombobox label="Origen" value={origen} onChange={setOrigen} placeholder="Seleccionar provincia..." />
+          </div>
+          <Button type="button" variant="outline" size="icon" onClick={swap} className="shrink-0 mb-0.5" aria-label="Intercambiar">
+            <ArrowLeftRight className="h-4 w-4" />
+          </Button>
+          <div className="flex-1">
+            <GeorefCombobox label="Destino" value={destino} onChange={setDestino} placeholder="Seleccionar provincia..." />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Carga */}
+        <div>
+          <Label className="mb-3 block text-sm font-medium">¿Qué vas a enviar?</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+
+            {/* ── Bultos ── */}
+            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeBultos ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              {/* Header — solo el click acá activa/desactiva */}
+              <button
+                type="button"
+                className="w-full flex items-center justify-between mb-2"
+                onClick={() => setIncluyeBultos((v) => !v)}
+              >
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Bultos</span>
+                </div>
+                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyeBultos ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                  {incluyeBultos && <span className="text-white text-xs font-bold">✓</span>}
+                </span>
+              </button>
+              {/* Input — independiente del toggle */}
+              {incluyeBultos && (
+                <div className="flex items-center gap-1 mt-1">
+                  <button type="button" onClick={() => setCantBultosStr(String(Math.max(1, cantBultosNum - 1)))}
+                    className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <Input
+                    type="number" min={1}
+                    value={cantBultosStr}
+                    onChange={(e) => setCantBultosStr(e.target.value)}
+                    onBlur={() => setCantBultosStr(String(Math.max(1, parseInt(cantBultosStr) || 1)))}
+                    className="h-8 text-sm text-center"
+                  />
+                  <button type="button" onClick={() => setCantBultosStr(String(cantBultosNum + 1))}
+                    className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0">
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+              {incluyeBultos && (
+                <p className="text-xs text-muted-foreground mt-1.5 text-center">
+                  {cantBultosNum} bulto{cantBultosNum !== 1 ? 's' : ''}
+                </p>
+              )}
+            </div>
+
+            {/* ── Pallets — selector discreto ── */}
+            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyePallets ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <button
+                type="button"
+                className="w-full flex items-center justify-between mb-2"
+                onClick={() => setIncluyePallets((v) => !v)}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold bg-slate-200 text-slate-600 rounded px-1.5 py-0.5">P</span>
+                  <span className="text-sm font-medium">Pallets</span>
+                </div>
+                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyePallets ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                  {incluyePallets && <span className="text-white text-xs font-bold">✓</span>}
+                </span>
+              </button>
+              {/* Selector de preset — no afecta el toggle */}
+              {incluyePallets && (
+                <div className="mt-1 space-y-1.5">
+                  <div className="flex items-center gap-1">
+                    <button type="button"
+                      onClick={() => {
+                        const idx = OPCIONES_PALLETS.indexOf(cantPallets);
+                        if (idx > 0) setCantPallets(OPCIONES_PALLETS[idx - 1]);
+                      }}
+                      disabled={cantPallets <= OPCIONES_PALLETS[0]}
+                      className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0 disabled:opacity-40">
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <div className="flex-1 text-center font-semibold text-sm py-1.5 bg-white rounded border">
+                      {labelPallets(cantPallets)}
+                    </div>
+                    <button type="button"
+                      onClick={() => {
+                        const idx = OPCIONES_PALLETS.indexOf(cantPallets);
+                        if (idx < OPCIONES_PALLETS.length - 1) setCantPallets(OPCIONES_PALLETS[idx + 1]);
+                      }}
+                      disabled={cantPallets >= OPCIONES_PALLETS[OPCIONES_PALLETS.length - 1]}
+                      className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0 disabled:opacity-40">
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {/* Chips rápidos para los más comunes */}
+                  <div className="flex flex-wrap gap-1">
+                    {[0.5, 1, 1.5, 2, 3].map((n) => (
+                      <button key={n} type="button"
+                        onClick={() => setCantPallets(n)}
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium border transition-colors ${cantPallets === n ? 'bg-primary text-white border-primary' : 'border-slate-200 text-slate-600 hover:border-slate-400'}`}>
+                        {labelPallets(n)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── Camión completo ── */}
+            <div className={`rounded-xl border-2 p-3 transition-colors ${camionCompleto ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <button
+                type="button"
+                className="w-full flex items-center justify-between"
+                onClick={() => setCamionCompleto((v) => !v)}
+              >
+                <div className="flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Camión completo</span>
+                </div>
+                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${camionCompleto ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                  {camionCompleto && <span className="text-white text-xs font-bold">✓</span>}
+                </span>
+              </button>
+              {camionCompleto && (
+                <p className="text-xs text-muted-foreground mt-2">Precio fijo por viaje completo</p>
+              )}
+            </div>
+          </div>
+
+          {/* Resumen */}
+          {(incluyeBultos || incluyePallets || camionCompleto) && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {incluyeBultos && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
+                  <Package className="h-3 w-3" />{cantBultosNum} bulto{cantBultosNum !== 1 ? 's' : ''}
+                </span>
+              )}
+              {incluyePallets && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
+                  <span className="text-[10px] font-bold">P</span>{labelPallets(cantPallets)}
+                </span>
+              )}
+              {camionCompleto && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
+                  <Truck className="h-3 w-3" />Camión completo
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <button
+            type="button"
+            onClick={() => setSoloPeritoneal((v) => !v)}
+            className="flex items-center gap-2.5 group"
+            aria-pressed={soloPeritoneal}
+          >
+            <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors shrink-0 ${soloPeritoneal ? 'bg-primary border-primary' : 'border-slate-300 group-hover:border-slate-400'}`}>
+              {soloPeritoneal && <span className="text-white text-xs font-bold">✓</span>}
+            </span>
+            <span className="text-sm text-slate-700">
+              Solo transportes <span className="font-medium text-blue-700">aptos para peritoneal</span>
+            </span>
+          </button>
+
+          <Button onClick={buscar} disabled={buscando} size="lg" className="w-full sm:w-auto">
+            {buscando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+            Buscar transportes
+          </Button>
+        </div>
+      </div>
+
+      {/* Resultados */}
+      {resultados !== null && (
+        <div>
+          {resultados.length > 0 && (
+            <div className="flex flex-col sm:flex-row gap-3 mb-4 flex-wrap">
+              <div className="flex items-center gap-1 rounded-lg border bg-white p-1">
+                {([
+                  { value: 'recomendado', label: 'Recomendado', icon: Star },
+                  { value: 'precio', label: 'Mejor precio', icon: DollarSign },
+                  { value: 'tiempo', label: 'Más rápido', icon: Clock },
+                ] as { value: OrdenCriterio; label: string; icon: typeof Star }[]).map(({ value, label, icon: Icon }) => (
+                  <button key={value} type="button" onClick={() => setOrden(value)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${orden === value ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground hover:bg-slate-100'}`}>
+                    <Icon className="h-3.5 w-3.5" />
+                    <span className="hidden sm:block">{label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {tagsEnResultados.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <span className="text-xs text-muted-foreground">Filtrar:</span>
+                  {tagsEnResultados.map((tag) => {
+                    const activo = filtroTags.includes(tag.id);
+                    return (
+                      <button key={tag.id} type="button"
+                        onClick={() => setFiltroTags((p) => p.includes(tag.id) ? p.filter((x) => x !== tag.id) : [...p, tag.id])}
+                        className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-all border-2"
+                        style={activo ? { backgroundColor: tag.color, color: 'white', borderColor: tag.color } : { borderColor: tag.color, color: tag.color, backgroundColor: 'transparent' }}>
+                        {tag.nombre}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="ml-auto text-sm text-muted-foreground self-center">
+                {resultadosOrdenados.length} resultado{resultadosOrdenados.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+          )}
+
+          {resultadosOrdenados.length === 0 ? (
+            <EmptyState icon={Search} title="Sin resultados"
+              description={filtroTags.length > 0 ? 'Ningún transporte tiene esas tags.' : 'No hay transportes configurados para esta ruta y tipo de carga.'}
+              action={filtroTags.length > 0 ? <Button variant="outline" onClick={() => setFiltroTags([])}>Quitar filtros</Button> : undefined}
+            />
+          ) : (
+            <div className="space-y-3">
+              {resultadosOrdenados.map((resultado, idx) => (
+                <ResultadoCard key={resultado.configuracion.id} resultado={resultado} posicion={idx}
+                  isElegido={elegidoId === resultado.configuracion.id}
+                  onElegir={() => elegirYGuardar(resultado)}
+                  guardando={guardando && elegidoId === resultado.configuracion.id} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tarjeta de resultado ─────────────────────────────────────────────────────
+
+interface ResultadoCardProps {
+  resultado: ResultadoEnvio;
+  posicion: number;
+  isElegido: boolean;
+  onElegir: () => void;
+  guardando: boolean;
+}
+
+function ResultadoCard({ resultado, posicion, isElegido, onElegir, guardando }: ResultadoCardProps) {
+  const { transporte, tags, precioTotal, tiempoMin, tiempoMax, desglose } = resultado;
+  const esBest = posicion === 0;
+
+  return (
+    <div className={`bg-white border rounded-xl overflow-hidden transition-all ${isElegido ? 'border-green-500 ring-2 ring-green-200' : esBest ? 'border-primary/30 ring-1 ring-primary/10' : ''}`}>
+      {esBest && !isElegido && (
+        <div className="bg-primary/5 border-b border-primary/10 px-4 py-1.5 flex items-center gap-1.5">
+          <Star className="h-3.5 w-3.5 text-primary fill-primary" />
+          <span className="text-xs font-semibold text-primary">Mejor opción</span>
+        </div>
+      )}
+      {isElegido && (
+        <div className="bg-green-50 border-b border-green-200 px-4 py-1.5 flex items-center gap-1.5">
+          <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+          <span className="text-xs font-semibold text-green-700">Seleccionado</span>
+        </div>
+      )}
+
+      <div className="p-4 flex flex-col sm:flex-row gap-4">
+        <div className="flex-1 min-w-0 space-y-2">
+          <div>
+            <h3 className="font-semibold text-slate-900 text-base">{transporte.razon_social}</h3>
+            {transporte.nombre_fantasia && <p className="text-xs text-muted-foreground">{transporte.nombre_fantasia}</p>}
+          </div>
+          <div className="flex flex-wrap items-baseline gap-4">
+            <div>
+              <span className="text-2xl font-bold text-slate-900">{formatearPrecio(precioTotal)}</span>
+              <span className="text-xs text-muted-foreground ml-1">total</span>
+            </div>
+            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" />{formatearTiempo(tiempoMin, tiempoMax)}
+            </div>
+          </div>
+          {tags && tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {resultado.configuracion.apto_peritoneal && (
+                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50">
+                  Apto peritoneal
+                </span>
+              )}
+              {tags.map((tag) => (
+                <span key={tag.id} className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: tag.color }}>
+                  {tag.nombre}
+                </span>
+              ))}
+            </div>
+          )}
+          {resultado.configuracion.apto_peritoneal && (!tags || tags.length === 0) && (
+            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50">
+              Apto peritoneal
+            </span>
+          )}
+        </div>
+        <div className="shrink-0 flex items-start pt-1">
+          <Button onClick={onElegir} disabled={guardando} variant={isElegido ? 'secondary' : 'default'} className="min-w-[110px]">
+            {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : isElegido ? <CheckCircle2 className="mr-2 h-4 w-4" /> : null}
+            {isElegido ? 'Elegido' : 'Elegir'}
+          </Button>
+        </div>
+      </div>
+
+      <Accordion type="single" collapsible>
+        <AccordionItem value="d" className="border-t border-dashed">
+          <AccordionTrigger className="px-4 py-2 text-xs text-muted-foreground hover:text-slate-700 hover:no-underline">
+            <span className="flex items-center gap-1.5"><Info className="h-3.5 w-3.5" />Ver desglose del cálculo</span>
+          </AccordionTrigger>
+          <AccordionContent className="px-4 pb-4">
+            <div className="bg-slate-50 rounded-lg p-3 space-y-1.5">
+              {desglose.items.map((item, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{item.descripcion}</span>
+                  <span className="font-medium tabular-nums">{formatearPrecio(item.subtotal)}</span>
+                </div>
+              ))}
+              <Separator className="my-2" />
+              <div className="flex items-center justify-between text-sm font-semibold">
+                <span>Total</span>
+                <span className="text-primary">{formatearPrecio(desglose.total)}</span>
+              </div>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    </div>
+  );
+}
