@@ -49,6 +49,16 @@ En el **SQL Editor** de Supabase ejecutá los siguientes scripts en orden:
 4. `supabase/migrations/02_bulto_inicial_y_peritoneal.sql`
 5. `supabase/migrations/03_contacto_transportes.sql` — agrega teléfono y correo a cada transporte
 
+### Importar configuraciones desde Excel
+
+Desde **Configuraciones → Importar configuración** se puede cargar un archivo `.xlsx`, `.xls` o `.csv` con estas columnas exactas:
+
+| NOMBRE DE TRANSPORTE | ORIGEN | DESTINO | LOCALIDAD DESTINO | PRECIO X BULTO | PRECIO X PALLET |
+|---|---|---|---|---:|---:|
+| TRANSPORTE EJEMPLO | Tucumán | Buenos Aires | La Plata | 22000 | 99000 |
+
+La localidad destino es opcional. El sistema intenta reconocerla con Georef ignorando mayúsculas y tildes; si necesita revisión, la vista previa permite buscar y seleccionar la localidad correcta o indicar “Sin localidad”. El origen solo usa la provincia. Las localidades, tiempos, camión, tags y tramos adicionales se pueden completar luego desde **Editar**. Se validan transportes registrados, precios, columnas obligatorias, rutas duplicadas y configuraciones ya existentes antes de importar.
+
 ### 4. Variables de entorno
 
 Copiá el archivo de ejemplo y completá con tus credenciales:

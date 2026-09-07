@@ -178,7 +178,7 @@ function BrandLogo() {
       </div>
       <div className="leading-none">
         <p className="font-bold text-sm text-slate-800">Tarifario</p>
-        <p className="text-xs text-slate-400">Salud Renal</p>
+        <p className="text-xs text-slate-400">Corporativo</p>
       </div>
     </div>
   );

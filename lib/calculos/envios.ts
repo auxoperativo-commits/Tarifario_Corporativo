@@ -23,6 +23,16 @@ export interface ConfiguracionConDatos extends ConfiguracionEnvio {
   tags?: Tag[];
 }
 
+/** Compara nombres de Georef y datos importados sin diferencias de tildes o mayúsculas. */
+export function normalizarUbicacion(valor: string | null | undefined): string {
+  return (valor ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('es-AR');
+}
+
 /** Extrae los tags de una configuración independientemente de cómo vengan de Supabase */
 export function extraerTags(config: ConfiguracionConDatos): Tag[] {
   // Si ya vienen aplanados (tags directos)
@@ -48,16 +58,16 @@ export function filtrarConfiguraciones(
   // Matchear ruta
   const matcheadoras = activas.filter((c) => {
     const matchOrigen =
-      c.origen_provincia.toLowerCase() === origen.provincia.toLowerCase() &&
+      normalizarUbicacion(c.origen_provincia) === normalizarUbicacion(origen.provincia) &&
       (c.origen_localidad === null ||
         (origen.localidad !== null &&
-          c.origen_localidad.toLowerCase() === origen.localidad.toLowerCase()));
+          normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad)));
 
     const matchDestino =
-      c.destino_provincia.toLowerCase() === destino.provincia.toLowerCase() &&
+      normalizarUbicacion(c.destino_provincia) === normalizarUbicacion(destino.provincia) &&
       (c.destino_localidad === null ||
         (destino.localidad !== null &&
-          c.destino_localidad.toLowerCase() === destino.localidad.toLowerCase()));
+          normalizarUbicacion(c.destino_localidad) === normalizarUbicacion(destino.localidad)));
 
     return matchOrigen && matchDestino;
   });

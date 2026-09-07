@@ -12,8 +12,9 @@ export default async function ConfiguracionesPage({
   const params = await searchParams;
   const supabase = await createClient();
 
-  const [{ data: transportes }, { data: tags }] = await Promise.all([
+  const [{ data: transportes }, { data: todosLosTransportes }, { data: tags }] = await Promise.all([
     supabase.from('transportes').select('*').eq('activo', true).order('razon_social'),
+    supabase.from('transportes').select('*').order('razon_social'),
     supabase.from('tags').select('*').order('nombre'),
   ]);
 
@@ -22,7 +23,7 @@ export default async function ConfiguracionesPage({
   if (params.transporte) {
     const { data } = await supabase
       .from('configuraciones_envio')
-      .select(`*, tarifas_bulto(*), configuracion_tags(tag_id)`)
+      .select(`*, tarifas_bulto(*), tarifas_pallet(*), configuracion_tags(tag_id)`)
       .eq('transporte_id', params.transporte)
       .order('created_at', { ascending: false });
     configuracionesIniciales = data ?? [];
@@ -36,6 +37,7 @@ export default async function ConfiguracionesPage({
       />
       <ConfiguracionesClient
         transportes={transportes ?? []}
+        transportesParaImportar={todosLosTransportes ?? []}
         tagsIniciales={tags ?? []}
         transportePreseleccionadoId={params.transporte ?? null}
         configuracionesIniciales={configuracionesIniciales}

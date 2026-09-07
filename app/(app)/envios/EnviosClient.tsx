@@ -7,6 +7,7 @@ import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
 import { useToast } from '@/hooks/use-toast';
 import {
   filtrarConfiguraciones,
+  extraerTags,
   calcularPrecio,
   calcularRanking,
   formatearPrecio,
@@ -28,6 +29,7 @@ import { EmptyState } from '@/components/layout/EmptyState';
 import {
   Search, ArrowLeftRight, Package, Truck, Clock,
   Star, DollarSign, Loader2, CheckCircle2, Info, Minus, Plus,
+  X,
 } from 'lucide-react';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -154,8 +156,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
 
     setBuscando(true);
     setElegidoId(null);
-    setFiltroTags([]);
-
     try {
       const busqueda: BusquedaEnvio = {
         origen: origen!,
@@ -166,7 +166,11 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         soloPeritoneal,
       };
       const configs = configuracionesRaw as ConfiguracionConDatos[];
-      const candidatos = filtrarConfiguraciones(configs, busqueda);
+      const candidatos = filtrarConfiguraciones(configs, busqueda).filter((config) => {
+        if (filtroTags.length === 0) return true;
+        const configTags = extraerTags(config);
+        return filtroTags.every((tagId) => configTags.some((tag) => tag.id === tagId));
+      });
       const conPrecios = candidatos.map((config) => ({
         config,
         desglose: calcularPrecio(config, busqueda),
@@ -192,7 +196,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
     } finally {
       setBuscando(false);
     }
-  }, [origen, destino, incluyeBultos, cantBultosStr, cantBultosNum, incluyePallets, cantPallets, camionCompleto, soloPeritoneal, configuracionesRaw, toast]);
+  }, [origen, destino, incluyeBultos, cantBultosStr, cantBultosNum, incluyePallets, cantPallets, camionCompleto, soloPeritoneal, filtroTags, configuracionesRaw, toast]);
 
   // ── Ordenar / filtrar resultados ───────────────────────────────────────────
   const resultadosOrdenados = useMemo(() => {
@@ -237,12 +241,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
       description: `${formatearPrecio(resultado.precioTotal)} · ${formatearTiempo(resultado.tiempoMin, resultado.tiempoMax)}`,
     });
   }
-
-  const tagsEnResultados = useMemo(() => {
-    if (!resultados) return [];
-    const ids = new Set(resultados.flatMap((r) => (r.tags ?? []).map((t) => t.id)));
-    return tagsDisponibles.filter((t) => ids.has(t.id));
-  }, [resultados, tagsDisponibles]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -388,6 +386,28 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
             </div>
           </div>
 
+          {tagsDisponibles.length > 0 && (
+            <div className="mt-4 border-t pt-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <Label className="text-sm font-medium">Filtrar por Tags <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+                {filtroTags.length > 0 && <button type="button" onClick={() => setFiltroTags([])} className="text-xs text-primary hover:underline">Quitar todos</button>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {tagsDisponibles.map((tag) => {
+                  const activo = filtroTags.includes(tag.id);
+                  return (
+                    <button key={tag.id} type="button" onClick={() => setFiltroTags((actuales) => activo ? actuales.filter((id) => id !== tag.id) : [...actuales, tag.id])}
+                      className="inline-flex items-center gap-1.5 rounded-full border-2 px-3 py-1 text-xs font-medium transition-colors"
+                      style={activo ? { backgroundColor: tag.color, borderColor: tag.color, color: 'white' } : { borderColor: tag.color, color: tag.color }}>
+                      {tag.nombre}{activo && <X className="h-3 w-3" />}
+                    </button>
+                  );
+                })}
+              </div>
+              {filtroTags.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Se mostrarán configuraciones que tengan todos los Tags seleccionados.</p>}
+            </div>
+          )}
+
           {/* Resumen */}
           {(incluyeBultos || incluyePallets || camionCompleto) && (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -450,23 +470,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
                   </button>
                 ))}
               </div>
-
-              {tagsEnResultados.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 items-center">
-                  <span className="text-xs text-muted-foreground">Filtrar:</span>
-                  {tagsEnResultados.map((tag) => {
-                    const activo = filtroTags.includes(tag.id);
-                    return (
-                      <button key={tag.id} type="button"
-                        onClick={() => setFiltroTags((p) => p.includes(tag.id) ? p.filter((x) => x !== tag.id) : [...p, tag.id])}
-                        className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-all border-2"
-                        style={activo ? { backgroundColor: tag.color, color: 'white', borderColor: tag.color } : { borderColor: tag.color, color: tag.color, backgroundColor: 'transparent' }}>
-                        {tag.nombre}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
 
               <div className="ml-auto text-sm text-muted-foreground self-center">
                 {resultadosOrdenados.length} resultado{resultadosOrdenados.length !== 1 ? 's' : ''}
@@ -531,17 +534,23 @@ function ResultadoCard({ resultado, posicion, isElegido, onElegir, guardando }: 
               {transporte.nombre_fantasia || transporte.razon_social}
             </Link>
             {transporte.nombre_fantasia && <p className="text-xs text-muted-foreground">{transporte.razon_social}</p>}
+            <p className="mt-1 text-xs text-muted-foreground">
+              {resultado.configuracion.origen_localidad || resultado.configuracion.origen_provincia}
+              <span className="mx-1.5 text-slate-400">→</span>
+              {resultado.configuracion.destino_localidad || resultado.configuracion.destino_provincia}
+            </p>
           </div>
           <div className="flex flex-wrap items-baseline gap-4">
             <div>
               <span className="text-2xl font-bold text-slate-900">{formatearPrecio(precioTotal)}</span>
               <span className="text-xs text-muted-foreground ml-1">total</span>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">Precio aproximado (sin IVA y sin seguro)</p>
             </div>
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />{formatearTiempo(tiempoMin, tiempoMax)}
             </div>
           </div>
-          {tags && tags.length > 0 && (
+          {(tags.length > 0 || resultado.configuracion.apto_peritoneal) && (
             <div className="flex flex-wrap gap-1.5">
               {resultado.configuracion.apto_peritoneal && (
                 <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50">
@@ -554,11 +563,6 @@ function ResultadoCard({ resultado, posicion, isElegido, onElegir, guardando }: 
                 </span>
               ))}
             </div>
-          )}
-          {resultado.configuracion.apto_peritoneal && (!tags || tags.length === 0) && (
-            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50">
-              Apto peritoneal
-            </span>
           )}
         </div>
         <div className="shrink-0 flex items-start pt-1">

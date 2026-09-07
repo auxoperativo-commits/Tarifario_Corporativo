@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/lib/context/UserContext';
 import { puedeEditar } from '@/components/layout/AppShell';
 import { useToast } from '@/hooks/use-toast';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
 import { EmptyState } from '@/components/layout/EmptyState';
-import { formatearPrecio } from '@/lib/calculos/envios';
+import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
+import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
   Transporte, Tag, ConfiguracionEnvio,
   TarifaBulto, TarifaPallet, UbicacionSeleccionada,
@@ -30,7 +31,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp,
+  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search,
 } from 'lucide-react';
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ const FORM_VACIO: FormData = {
 
 interface Props {
   transportes: Transporte[];
+  transportesParaImportar: Transporte[];
   tagsIniciales: Tag[];
   transportePreseleccionadoId: string | null;
   configuracionesIniciales: unknown[];
@@ -86,7 +88,7 @@ interface Props {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export function ConfiguracionesClient({
-  transportes, tagsIniciales, transportePreseleccionadoId, configuracionesIniciales,
+  transportes, transportesParaImportar, tagsIniciales, transportePreseleccionadoId, configuracionesIniciales,
 }: Props) {
   const { perfil } = useUser();
   const { toast } = useToast();
@@ -108,6 +110,8 @@ export function ConfiguracionesClient({
   const [eliminandoId, setEliminandoId] = useState<string | null>(null);
   const [nuevaTagNombre, setNuevaTagNombre] = useState('');
   const [creandoTag, setCreandoTag] = useState(false);
+  const [importarOpen, setImportarOpen] = useState(false);
+  const [filtroConfiguraciones, setFiltroConfiguraciones] = useState('');
 
   const cargar = useCallback(async (tid: string) => {
     if (!tid) { setConfigs([]); return; }
@@ -314,6 +318,17 @@ export function ConfiguracionesClient({
 
   const getTag = (id: string) => tags.find((t) => t.id === id);
   const transporteActual = transportes.find((t) => t.id === transporteId);
+  const configsFiltradas = useMemo(() => {
+    const texto = normalizarUbicacion(filtroConfiguraciones);
+    if (!texto) return configs;
+    return configs.filter((config) => [config.origen_provincia, config.origen_localidad, config.destino_provincia, config.destino_localidad]
+      .some((valor) => normalizarUbicacion(valor).includes(texto)));
+  }, [configs, filtroConfiguraciones]);
+
+  async function finalizarImportacion(tid: string) {
+    setTransporteId(tid);
+    await cargar(tid);
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -334,11 +349,8 @@ export function ConfiguracionesClient({
               ))}
             </SelectContent>
           </Select>
-          {transporteId && editar && (
-            <Button onClick={abrirNuevo} className="shrink-0">
-              <Plus className="mr-2 h-4 w-4" />Agregar configuración
-            </Button>
-          )}
+          {transporteId && editar && <Button onClick={abrirNuevo} className="shrink-0"><Plus className="mr-2 h-4 w-4" />Agregar configuración</Button>}
+          {editar && <Button variant="outline" onClick={() => setImportarOpen(true)} className="shrink-0"><Upload className="mr-2 h-4 w-4" />Importar configuración</Button>}
         </div>
       </div>
 
@@ -354,7 +366,11 @@ export function ConfiguracionesClient({
         />
       ) : (
         <div className="space-y-3">
-          {configs.map((c) => {
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={filtroConfiguraciones} onChange={(event) => setFiltroConfiguraciones(event.target.value)} placeholder="Buscar por provincia o localidad..." className="pl-9 bg-white" />
+          </div>
+          {configsFiltradas.length === 0 ? <p className="rounded-lg border bg-white p-5 text-sm text-muted-foreground">No hay configuraciones que coincidan con la búsqueda.</p> : configsFiltradas.map((c) => {
             const tagsDeLaConfig = c.configuracion_tags.map((ct) => getTag(ct.tag_id)).filter(Boolean) as Tag[];
             const exp = expandidas.has(c.id);
             return (
@@ -654,6 +670,8 @@ export function ConfiguracionesClient({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ImportarConfiguracionDialog open={importarOpen} onOpenChange={setImportarOpen} transportes={transportesParaImportar} onImported={finalizarImportacion} />
     </>
   );
 }
