@@ -41,6 +41,7 @@ import {
   Truck,
   Loader2,
   ExternalLink,
+  Eye,
 } from 'lucide-react';
 
 interface TransportesClientProps {
@@ -51,6 +52,8 @@ const FORM_VACIO: Omit<Transporte, 'id' | 'created_at' | 'updated_at'> = {
   razon_social: '',
   nombre_fantasia: null,
   cuit: null,
+  telefono: null,
+  correo: null,
   observacion: null,
   activo: true,
 };
@@ -95,6 +98,8 @@ export function TransportesClient({ transportesIniciales }: TransportesClientPro
       razon_social: t.razon_social,
       nombre_fantasia: t.nombre_fantasia,
       cuit: t.cuit,
+      telefono: t.telefono,
+      correo: t.correo,
       observacion: t.observacion,
       activo: t.activo,
     });
@@ -234,14 +239,10 @@ export function TransportesClient({ transportesIniciales }: TransportesClientPro
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-slate-800 truncate">
-                    {t.razon_social}
-                  </span>
-                  {t.nombre_fantasia && (
-                    <span className="text-sm text-muted-foreground">
-                      &ldquo;{t.nombre_fantasia}&rdquo;
-                    </span>
-                  )}
+                  <button type="button" onClick={() => router.push(`/transportes/${t.id}`)} className="font-semibold text-slate-800 truncate hover:text-primary text-left">
+                    {t.nombre_fantasia || t.razon_social}
+                  </button>
+                  {t.nombre_fantasia && <span className="text-sm text-muted-foreground">{t.razon_social}</span>}
                   <Badge variant={t.activo ? 'default' : 'secondary'}>
                     {t.activo ? 'Activo' : 'Inactivo'}
                   </Badge>
@@ -259,6 +260,9 @@ export function TransportesClient({ transportesIniciales }: TransportesClientPro
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
+                <Button variant="ghost" size="icon" onClick={() => router.push(`/transportes/${t.id}`)} aria-label={`Ver perfil de ${t.nombre_fantasia || t.razon_social}`} title="Ver perfil">
+                  <Eye className="h-4 w-4" />
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -348,6 +352,17 @@ export function TransportesClient({ transportesIniciales }: TransportesClientPro
                   setForm((f) => ({ ...f, cuit: e.target.value || null }))
                 }
               />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="telefono">Teléfono / WhatsApp</Label>
+                <Input id="telefono" placeholder="+54 9 358 123 4567" value={form.telefono ?? ''} onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value || null }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="correo">Correo</Label>
+                <Input id="correo" type="email" placeholder="contacto@transporte.com" value={form.correo ?? ''} onChange={(e) => setForm((f) => ({ ...f, correo: e.target.value || null }))} />
+              </div>
             </div>
 
             <div className="space-y-1.5">

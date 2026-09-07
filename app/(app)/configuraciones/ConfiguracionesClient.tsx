@@ -329,7 +329,7 @@ export function ConfiguracionesClient({
             <SelectContent>
               {transportes.map((t) => (
                 <SelectItem key={t.id} value={t.id}>
-                  {t.razon_social}{t.nombre_fantasia ? ` (${t.nombre_fantasia})` : ''}
+                  {t.nombre_fantasia || t.razon_social}{t.nombre_fantasia ? ` · ${t.razon_social}` : ''}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -349,7 +349,7 @@ export function ConfiguracionesClient({
         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : configs.length === 0 ? (
         <EmptyState icon={Settings} title="Sin configuraciones"
-          description={`${transporteActual?.razon_social} no tiene configuraciones de envío.`}
+          description={`${transporteActual?.nombre_fantasia || transporteActual?.razon_social} no tiene configuraciones de envío.`}
           action={editar ? <Button onClick={abrirNuevo}><Plus className="mr-2 h-4 w-4" />Agregar configuración</Button> : undefined}
         />
       ) : (
@@ -458,7 +458,7 @@ export function ConfiguracionesClient({
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editandoId ? 'Editar configuración' : 'Nueva configuración de envío'}</DialogTitle>
-            <DialogDescription>{transporteActual?.razon_social} · Ruta, tiempos y precios.</DialogDescription>
+            <DialogDescription>{transporteActual?.nombre_fantasia || transporteActual?.razon_social} · Ruta, tiempos y precios.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 py-2">

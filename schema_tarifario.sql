@@ -13,6 +13,8 @@ create table transportes (
   razon_social text not null,
   nombre_fantasia text,
   cuit varchar(13),
+  telefono text,
+  correo text,
   observacion text,
   activo boolean not null default true,
   created_at timestamptz not null default now(),

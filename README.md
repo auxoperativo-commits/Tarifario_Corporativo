@@ -45,6 +45,9 @@ En el **SQL Editor** de Supabase ejecutá los siguientes scripts en orden:
 
 1. `schema_tarifario.sql` — crea todas las tablas, índices, políticas RLS y datos de ejemplo
 2. `supabase/migrations/00_create_perfil_trigger.sql` — crea el trigger que genera automáticamente un perfil de usuario al registrarse
+3. `supabase/migrations/01_tarifas_pallet.sql`
+4. `supabase/migrations/02_bulto_inicial_y_peritoneal.sql`
+5. `supabase/migrations/03_contacto_transportes.sql` — agrega teléfono y correo a cada transporte
 
 ### 4. Variables de entorno
 

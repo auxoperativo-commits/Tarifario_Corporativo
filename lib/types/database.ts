@@ -10,6 +10,8 @@ export interface Transporte {
   razon_social: string;
   nombre_fantasia: string | null;
   cuit: string | null;
+  telefono: string | null;
+  correo: string | null;
   observacion: string | null;
   activo: boolean;
   created_at: string;

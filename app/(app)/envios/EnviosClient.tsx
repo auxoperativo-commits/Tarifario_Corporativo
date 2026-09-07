@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
 import { useToast } from '@/hooks/use-toast';
@@ -181,7 +182,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
     });
     setGuardando(false);
     toast({
-      title: `${resultado.transporte.razon_social} seleccionado`,
+      title: `${resultado.transporte.nombre_fantasia || resultado.transporte.razon_social} seleccionado`,
       description: `${formatearPrecio(resultado.precioTotal)} · ${formatearTiempo(resultado.tiempoMin, resultado.tiempoMax)}`,
     });
   }
@@ -475,8 +476,10 @@ function ResultadoCard({ resultado, posicion, isElegido, onElegir, guardando }: 
       <div className="p-4 flex flex-col sm:flex-row gap-4">
         <div className="flex-1 min-w-0 space-y-2">
           <div>
-            <h3 className="font-semibold text-slate-900 text-base">{transporte.razon_social}</h3>
-            {transporte.nombre_fantasia && <p className="text-xs text-muted-foreground">{transporte.nombre_fantasia}</p>}
+            <Link href={`/transportes/${transporte.id}`} className="font-semibold text-slate-900 text-base hover:text-primary hover:underline">
+              {transporte.nombre_fantasia || transporte.razon_social}
+            </Link>
+            {transporte.nombre_fantasia && <p className="text-xs text-muted-foreground">{transporte.razon_social}</p>}
           </div>
           <div className="flex flex-wrap items-baseline gap-4">
             <div>

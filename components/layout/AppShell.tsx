@@ -17,6 +17,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -47,6 +48,12 @@ const NAV_ITEMS = [
     href: '/tags',
     label: 'Tags',
     icon: Tags,
+    roles: ['compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
+  },
+  {
+    href: '/reportes',
+    label: 'Reportes',
+    icon: BarChart3,
     roles: ['compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
   },
 ];
