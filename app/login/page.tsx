@@ -53,7 +53,7 @@ export default function LoginPage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Tarifario</h1>
-          <p className="text-sm text-slate-500">Salud Renal</p>
+          <p className="text-sm text-slate-500">Corporativo</p>
         </div>
       </div>
 

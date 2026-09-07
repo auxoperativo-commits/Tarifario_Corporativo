@@ -6,7 +6,7 @@ import { Toaster } from '@/components/ui/toaster';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Tarifario — Salud Renal',
+  title: 'Tarifario — Corporativo',
   description: 'Sistema de comparación de costos de envío de insumos médicos',
 };
 
