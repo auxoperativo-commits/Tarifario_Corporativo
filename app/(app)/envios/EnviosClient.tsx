@@ -34,9 +34,6 @@ import {
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-// Valores discretos permitidos para pallets — evita problemas de punto flotante
-const OPCIONES_PALLETS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
-
 type OrdenCriterio = 'recomendado' | 'precio' | 'tiempo';
 
 const ULTIMA_BUSQUEDA_KEY = 'tarifario:ultima-busqueda';
@@ -88,7 +85,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
 
   // Pallets: activado/desactivado + valor discreto del preset
   const [incluyePallets, setIncluyePallets] = useState(false);
-  const [cantPallets, setCantPallets] = useState<number>(1); // índice del preset
+  const [cantPallets, setCantPallets] = useState<number>(1);
 
   // Camión completo
   const [camionCompleto, setCamionCompleto] = useState(false);
@@ -330,37 +327,30 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
                 <div className="mt-1 space-y-1.5">
                   <div className="flex items-center gap-1">
                     <button type="button"
-                      onClick={() => {
-                        const idx = OPCIONES_PALLETS.indexOf(cantPallets);
-                        if (idx > 0) setCantPallets(OPCIONES_PALLETS[idx - 1]);
-                      }}
-                      disabled={cantPallets <= OPCIONES_PALLETS[0]}
+                      onClick={() => setCantPallets((cantidad) => Math.max(0.5, Number((cantidad - 0.5).toFixed(2))))}
+                      disabled={cantPallets <= 0.5}
                       className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0 disabled:opacity-40">
                       <Minus className="h-3.5 w-3.5" />
                     </button>
-                    <div className="flex-1 text-center font-semibold text-sm py-1.5 bg-white rounded border">
-                      {labelPallets(cantPallets)}
-                    </div>
-                    <button type="button"
-                      onClick={() => {
-                        const idx = OPCIONES_PALLETS.indexOf(cantPallets);
-                        if (idx < OPCIONES_PALLETS.length - 1) setCantPallets(OPCIONES_PALLETS[idx + 1]);
+                    <Input
+                      type="number"
+                      min={0.5}
+                      step={0.5}
+                      value={cantPallets}
+                      onChange={(event) => {
+                        const valor = Number(event.target.value);
+                        if (Number.isFinite(valor) && valor >= 0.5) setCantPallets(valor);
                       }}
-                      disabled={cantPallets >= OPCIONES_PALLETS[OPCIONES_PALLETS.length - 1]}
+                      className="h-8 flex-1 text-center text-sm font-semibold"
+                      aria-label="Cantidad de pallets"
+                    />
+                    <button type="button"
+                      onClick={() => setCantPallets((cantidad) => Number((cantidad + 0.5).toFixed(2)))}
                       className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0 disabled:opacity-40">
                       <Plus className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  {/* Chips rápidos para los más comunes */}
-                  <div className="flex flex-wrap gap-1">
-                    {[0.5, 1, 1.5, 2, 3].map((n) => (
-                      <button key={n} type="button"
-                        onClick={() => setCantPallets(n)}
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium border transition-colors ${cantPallets === n ? 'bg-primary text-white border-primary' : 'border-slate-200 text-slate-600 hover:border-slate-400'}`}>
-                        {labelPallets(n)}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5 text-center">Ingresá cualquier cantidad, por ejemplo 15 o 17 pallets.</p>
                 </div>
               )}
             </div>
