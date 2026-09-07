@@ -21,9 +21,14 @@ export function TransportesPerfilClient({ transporte, configuraciones }: { trans
 
   return (
     <div className="space-y-4">
-      <Button asChild variant="ghost" className="px-0">
-        <Link href="/transportes"><ArrowLeft className="mr-2 h-4 w-4" />Volver a transportes</Link>
-      </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button asChild variant="outline">
+          <Link href="/envios"><ArrowLeft className="mr-2 h-4 w-4" />Volver a Envíos</Link>
+        </Button>
+        <Button asChild variant="ghost" className="px-0">
+          <Link href="/transportes"><ArrowLeft className="mr-2 h-4 w-4" />Volver a transportes</Link>
+        </Button>
+      </div>
 
       <Card>
         <CardHeader className="flex-row items-start justify-between space-y-0">

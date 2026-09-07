@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
@@ -36,6 +36,8 @@ import {
 const OPCIONES_PALLETS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 
 type OrdenCriterio = 'recomendado' | 'precio' | 'tiempo';
+
+const ULTIMA_BUSQUEDA_KEY = 'tarifario:ultima-busqueda';
 
 interface PerfilDefaults {
   origen_predeterminado_provincia: string | null;
@@ -99,6 +101,41 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
   const [elegidoId, setElegidoId] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 
+  useEffect(() => {
+    try {
+      const guardada = sessionStorage.getItem(ULTIMA_BUSQUEDA_KEY);
+      if (!guardada) return;
+
+      const estado = JSON.parse(guardada) as {
+        origen: UbicacionSeleccionada | null;
+        destino: UbicacionSeleccionada | null;
+        incluyeBultos: boolean;
+        cantBultosStr: string;
+        incluyePallets: boolean;
+        cantPallets: number;
+        camionCompleto: boolean;
+        soloPeritoneal: boolean;
+        resultados: ResultadoEnvio[] | null;
+        orden: OrdenCriterio;
+        filtroTags: string[];
+      };
+
+      setOrigen(estado.origen);
+      setDestino(estado.destino);
+      setIncluyeBultos(estado.incluyeBultos);
+      setCantBultosStr(estado.cantBultosStr);
+      setIncluyePallets(estado.incluyePallets);
+      setCantPallets(estado.cantPallets);
+      setCamionCompleto(estado.camionCompleto);
+      setSoloPeritoneal(estado.soloPeritoneal);
+      setResultados(estado.resultados);
+      setOrden(estado.orden);
+      setFiltroTags(estado.filtroTags);
+    } catch {
+      sessionStorage.removeItem(ULTIMA_BUSQUEDA_KEY);
+    }
+  }, []);
+
   function swap() {
     const tmp = origen; setOrigen(destino); setDestino(tmp);
   }
@@ -134,14 +171,28 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         config,
         desglose: calcularPrecio(config, busqueda),
       }));
-      setResultados(calcularRanking(conPrecios));
+      const nuevosResultados = calcularRanking(conPrecios);
+      setResultados(nuevosResultados);
       setOrden('recomendado');
+      sessionStorage.setItem(ULTIMA_BUSQUEDA_KEY, JSON.stringify({
+        origen,
+        destino,
+        incluyeBultos,
+        cantBultosStr,
+        incluyePallets,
+        cantPallets,
+        camionCompleto,
+        soloPeritoneal,
+        resultados: nuevosResultados,
+        orden: 'recomendado',
+        filtroTags: [],
+      }));
     } catch {
       toast({ variant: 'destructive', title: 'Error al calcular resultados.' });
     } finally {
       setBuscando(false);
     }
-  }, [origen, destino, incluyeBultos, cantBultosNum, incluyePallets, cantPallets, camionCompleto, configuracionesRaw, toast]);
+  }, [origen, destino, incluyeBultos, cantBultosStr, cantBultosNum, incluyePallets, cantPallets, camionCompleto, soloPeritoneal, configuracionesRaw, toast]);
 
   // ── Ordenar / filtrar resultados ───────────────────────────────────────────
   const resultadosOrdenados = useMemo(() => {
