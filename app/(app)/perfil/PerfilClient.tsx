@@ -22,17 +22,11 @@ import { Loader2, User, MapPin, Mail, ShieldCheck, X } from 'lucide-react';
 
 const ROL_LABELS: Record<string, string> = {
   operario: 'Operario',
-  compras: 'Compras',
-  licitaciones: 'Licitaciones',
-  gerencia: 'Gerencia',
   admin: 'Administrador',
 };
 
 const ROL_COLORS: Record<string, string> = {
   operario: 'bg-slate-100 text-slate-700 border-slate-200',
-  compras: 'bg-blue-100 text-blue-700 border-blue-200',
-  licitaciones: 'bg-purple-100 text-purple-700 border-purple-200',
-  gerencia: 'bg-amber-100 text-amber-700 border-amber-200',
   admin: 'bg-red-100 text-red-700 border-red-200',
 };
 

@@ -48,6 +48,9 @@ En el **SQL Editor** de Supabase ejecutá los siguientes scripts en orden:
 3. `supabase/migrations/01_tarifas_pallet.sql`
 4. `supabase/migrations/02_bulto_inicial_y_peritoneal.sql`
 5. `supabase/migrations/03_contacto_transportes.sql` — agrega teléfono y correo a cada transporte
+6. `supabase/migrations/04_roles_y_permisos.sql` — deja solo los roles operario/admin y limita las escrituras al admin
+
+Para habilitar la creación de usuarios desde **Usuarios**, agregá en el entorno del servidor (Vercel y `.env.local`) la variable privada `SUPABASE_SERVICE_ROLE_KEY`. Se obtiene en Supabase → Settings → API → `service_role`; nunca debe publicarse ni comenzar con `NEXT_PUBLIC_`.
 
 ### Importar configuraciones desde Excel
 
@@ -72,6 +75,7 @@ Editá `.env.local`:
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://tu-proyecto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=tu-anon-key-aqui
+SUPABASE_SERVICE_ROLE_KEY=tu-service-role-key-aqui
 ```
 
 Estas variables son las únicas necesarias. Ambas son públicas (se usan en el cliente del browser), la seguridad la maneja Supabase con Row Level Security.

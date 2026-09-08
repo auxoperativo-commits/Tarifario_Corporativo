@@ -1,6 +1,6 @@
 // Tipos del esquema Supabase — Tarifario Salud Renal
 
-export type Rol = 'operario' | 'compras' | 'licitaciones' | 'gerencia' | 'admin';
+export type Rol = 'operario' | 'admin';
 
 // El historial guarda un string simple; la UI permite combinar tipos
 export type TipoEnvio = 'bultos' | 'pallet' | 'camion_completo' | 'mixto';

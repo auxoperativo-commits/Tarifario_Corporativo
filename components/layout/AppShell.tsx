@@ -18,6 +18,7 @@ import {
   X,
   ChevronRight,
   BarChart3,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,47 +31,47 @@ const NAV_ITEMS = [
     href: '/envios',
     label: 'Envíos',
     icon: Package2,
-    roles: ['operario', 'compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
+    roles: ['operario', 'admin'] as Rol[],
   },
   {
     href: '/transportes',
     label: 'Transportes',
     icon: Truck,
-    roles: ['compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
+    roles: ['operario', 'admin'] as Rol[],
   },
   {
     href: '/configuraciones',
     label: 'Configuraciones',
     icon: Settings,
-    roles: ['compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
+    roles: ['operario', 'admin'] as Rol[],
   },
   {
     href: '/tags',
     label: 'Tags',
     icon: Tags,
-    roles: ['compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
+    roles: ['operario', 'admin'] as Rol[],
   },
   {
     href: '/reportes',
     label: 'Reportes',
     icon: BarChart3,
-    roles: ['compras', 'licitaciones', 'gerencia', 'admin'] as Rol[],
+    roles: ['operario', 'admin'] as Rol[],
+  },
+  {
+    href: '/usuarios',
+    label: 'Usuarios',
+    icon: Users,
+    roles: ['operario', 'admin'] as Rol[],
   },
 ];
 
 const ROL_LABELS: Record<Rol, string> = {
   operario: 'Operario',
-  compras: 'Compras',
-  licitaciones: 'Licitaciones',
-  gerencia: 'Gerencia',
   admin: 'Administrador',
 };
 
 const ROL_COLORS: Record<Rol, string> = {
   operario: 'bg-slate-100 text-slate-700',
-  compras: 'bg-blue-100 text-blue-700',
-  licitaciones: 'bg-purple-100 text-purple-700',
-  gerencia: 'bg-amber-100 text-amber-700',
   admin: 'bg-red-100 text-red-700',
 };
 
@@ -278,7 +279,7 @@ function SidebarContent({
 // ─── Hook de permisos (client-side) ───────────────────────────────────────────
 
 export function puedeEditar(rol: Rol): boolean {
-  return ['compras', 'licitaciones', 'gerencia', 'admin'].includes(rol);
+  return rol === 'admin';
 }
 
 export function esAdmin(rol: Rol): boolean {

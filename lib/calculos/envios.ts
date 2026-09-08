@@ -59,20 +59,30 @@ export function filtrarConfiguraciones(
   const matcheadoras = activas.filter((c) => {
     const matchOrigen =
       normalizarUbicacion(c.origen_provincia) === normalizarUbicacion(origen.provincia) &&
-      (c.origen_localidad === null ||
-        (origen.localidad !== null &&
-          normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad)));
+      (origen.localidad === null ||
+        c.origen_localidad === null ||
+        normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad));
 
     const matchDestino =
       normalizarUbicacion(c.destino_provincia) === normalizarUbicacion(destino.provincia) &&
-      (c.destino_localidad === null ||
-        (destino.localidad !== null &&
-          normalizarUbicacion(c.destino_localidad) === normalizarUbicacion(destino.localidad)));
+      (destino.localidad === null ||
+        c.destino_localidad === null ||
+        normalizarUbicacion(c.destino_localidad) === normalizarUbicacion(destino.localidad));
 
     return matchOrigen && matchDestino;
   });
 
-  // Priorizar más específica por transporte
+  // Con búsqueda solo por provincia, conservar todas las localidades configuradas.
+  if (origen.localidad === null && destino.localidad === null) {
+    return matcheadoras.filter((c) => {
+      if (cantidadBultos > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
+      if (cantidadPallets > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
+      if (camionCompleto && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
+      return !busqueda.soloPeritoneal || c.apto_peritoneal;
+    });
+  }
+
+  // Si se eligió una localidad, priorizar la configuración más específica por transporte.
   const porTransporte = new Map<string, ConfiguracionConDatos>();
   for (const config of matcheadoras) {
     const existing = porTransporte.get(config.transporte_id);

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { BarChart3, PieChart, SlidersHorizontal } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatearPrecio } from '@/lib/calculos/envios';
+import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 
 interface ReporteConfiguracion {
   id: string;
@@ -62,19 +62,31 @@ export function ReportesClient({ configuraciones }: { configuraciones: ReporteCo
   const [destinoProvincia, setDestinoProvincia] = useState('');
   const [destinoLocalidad, setDestinoLocalidad] = useState('');
 
-  const opciones = (campo: keyof ReporteConfiguracion) => Array.from(new Set(configuraciones.map((config) => config[campo]).filter(Boolean) as string[])).sort();
+  const opciones = (campo: keyof ReporteConfiguracion) => {
+    const valores = new Map<string, string>();
+    configuraciones.forEach((config) => {
+      const valor = config[campo];
+      if (typeof valor === 'string' && valor.trim()) valores.set(normalizarUbicacion(valor), valor);
+    });
+    return Array.from(valores.values()).sort((a, b) => a.localeCompare(b, 'es'));
+  };
   const configsFiltradas = useMemo(() => configuraciones.filter((config) =>
-    (!origenProvincia || config.origen_provincia === origenProvincia) &&
-    (!origenLocalidad || config.origen_localidad === origenLocalidad) &&
-    (!destinoProvincia || config.destino_provincia === destinoProvincia) &&
-    (!destinoLocalidad || config.destino_localidad === destinoLocalidad)
+    (!origenProvincia || normalizarUbicacion(config.origen_provincia) === normalizarUbicacion(origenProvincia)) &&
+    (!origenLocalidad || normalizarUbicacion(config.origen_localidad) === normalizarUbicacion(origenLocalidad)) &&
+    (!destinoProvincia || normalizarUbicacion(config.destino_provincia) === normalizarUbicacion(destinoProvincia)) &&
+    (!destinoLocalidad || normalizarUbicacion(config.destino_localidad) === normalizarUbicacion(destinoLocalidad))
   ), [configuraciones, origenProvincia, origenLocalidad, destinoProvincia, destinoLocalidad]);
   const barrasBultos = useMemo(() => construirBarras(configsFiltradas, 'bultos'), [configsFiltradas]);
   const barrasPallets = useMemo(() => construirBarras(configsFiltradas, 'pallets'), [configsFiltradas]);
   const barrasCamion = useMemo(() => construirBarras(configsFiltradas, 'camion'), [configsFiltradas]);
   const destinos = useMemo(() => {
     const conteo = new Map<string, number>();
-    configsFiltradas.forEach((config) => { const nombre = config.destino_localidad || config.destino_provincia; conteo.set(nombre, (conteo.get(nombre) ?? 0) + 1); });
+    configsFiltradas.forEach((config) => {
+      const nombre = config.destino_localidad || config.destino_provincia;
+      const clave = normalizarUbicacion(nombre);
+      const anterior = Array.from(conteo.keys()).find((actual) => normalizarUbicacion(actual) === clave);
+      conteo.set(anterior ?? nombre, (conteo.get(anterior ?? nombre) ?? 0) + 1);
+    });
     return Array.from(conteo.entries()).sort((a, b) => b[1] - a[1]);
   }, [configsFiltradas]);
   const totalDestinos = destinos.reduce((sum, [, cantidad]) => sum + cantidad, 0);
