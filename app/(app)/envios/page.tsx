@@ -12,7 +12,6 @@ export default async function EnviosPage() {
     { data: configuraciones },
     { data: tags },
     { data: perfil },
-    { data: { user } },
   ] = await Promise.all([
     supabase
       .from('configuraciones_envio')
@@ -27,7 +26,6 @@ export default async function EnviosPage() {
         'origen_predeterminado_provincia, origen_predeterminado_localidad, destino_predeterminado_provincia, destino_predeterminado_localidad'
       )
       .single(),
-    supabase.auth.getUser(),
   ]);
 
   return (
@@ -40,7 +38,6 @@ export default async function EnviosPage() {
         configuracionesRaw={configuraciones ?? []}
         tagsDisponibles={tags ?? []}
         perfilDefaults={perfil}
-        userId={user?.id ?? null}
       />
     </div>
   );

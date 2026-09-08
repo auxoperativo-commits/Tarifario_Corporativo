@@ -62,6 +62,34 @@ interface FormData {
   tagIds: string[];
 }
 
+type EstadoActualizacion = 'vigente' | 'atencion' | 'desactualizado';
+
+function fechaMasReciente(fechas: Array<string | null | undefined>): string | null {
+  const validas = fechas.filter((fecha): fecha is string => Boolean(fecha));
+  if (!validas.length) return null;
+  return validas.reduce((ultima, fecha) => new Date(fecha) > new Date(ultima) ? fecha : ultima);
+}
+
+function estadoActualizacion(fecha: string | null): EstadoActualizacion {
+  if (!fecha) return 'desactualizado';
+  const dias = (Date.now() - new Date(fecha).getTime()) / 86400000;
+  if (dias <= 30) return 'vigente';
+  if (dias <= 60) return 'atencion';
+  return 'desactualizado';
+}
+
+function formatearFechaActualizacion(fecha: string | null): string {
+  return fecha
+    ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(new Date(fecha))
+    : 'Sin fecha registrada';
+}
+
+const COLORES_ACTUALIZACION: Record<EstadoActualizacion, string> = {
+  vigente: 'bg-green-500',
+  atencion: 'bg-yellow-400',
+  desactualizado: 'bg-red-500',
+};
+
 const FORM_VACIO: FormData = {
   origen: null,
   destino: null,
@@ -227,6 +255,7 @@ export function ConfiguracionesClient({
     if (err) { toast({ variant: 'destructive', title: err }); return; }
     setSaving(true);
     try {
+      const fechaActualizacion = new Date().toISOString();
       const payload = {
         transporte_id: transporteId,
         origen_provincia: form.origen!.provincia,
@@ -237,6 +266,7 @@ export function ConfiguracionesClient({
         tiempo_estimado_max_horas: form.tiempo_max !== '' ? Number(form.tiempo_max) : null,
         precio_pallet: null,
         precio_camion_completo: form.precio_camion !== '' ? Number(form.precio_camion) : null,
+        precio_camion_actualizado_at: form.precio_camion !== '' ? fechaActualizacion : null,
         apto_peritoneal: form.aptoPeritoneal,
         activo: form.activo,
       };
@@ -264,6 +294,7 @@ export function ConfiguracionesClient({
             desde_bulto: Number(t.desde),
             precio: Number(t.precio),
             es_valor_inicial: t.esValorInicial ?? false,
+            updated_at: fechaActualizacion,
           }))
         );
         if (error) throw error;
@@ -275,7 +306,7 @@ export function ConfiguracionesClient({
         const palletsFilled = form.tramosPallet.filter((t) => t.desde !== '' && t.precio !== '');
         if (palletsFilled.length > 0) {
           await supabase.from('tarifas_pallet').insert(
-            palletsFilled.map((t) => ({ configuracion_id: configId, desde_pallet: Number(t.desde), precio: Number(t.precio) }))
+            palletsFilled.map((t) => ({ configuracion_id: configId, desde_pallet: Number(t.desde), precio: Number(t.precio), updated_at: fechaActualizacion }))
           );
         }
       } catch {
@@ -370,9 +401,22 @@ export function ConfiguracionesClient({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input value={filtroConfiguraciones} onChange={(event) => setFiltroConfiguraciones(event.target.value)} placeholder="Buscar por provincia o localidad..." className="pl-9 bg-white" />
           </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <span className="font-medium">Estado de precios:</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-green-500" />Vigente (hasta 30 días)</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-yellow-400" />Atención (31–60 días)</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-red-500" />Desactualizado (más de 60 días)</span>
+          </div>
           {configsFiltradas.length === 0 ? <p className="rounded-lg border bg-white p-5 text-sm text-muted-foreground">No hay configuraciones que coincidan con la búsqueda.</p> : configsFiltradas.map((c) => {
             const tagsDeLaConfig = c.configuracion_tags.map((ct) => getTag(ct.tag_id)).filter(Boolean) as Tag[];
             const exp = expandidas.has(c.id);
+            const ultimaActualizacion = fechaMasReciente([
+              c.updated_at,
+              c.precio_camion_actualizado_at,
+              ...c.tarifas_bulto.map((tarifa) => tarifa.updated_at),
+              ...(c.tarifas_pallet ?? []).map((tarifa) => tarifa.updated_at),
+            ]);
+            const estado = estadoActualizacion(ultimaActualizacion);
             return (
               <div key={c.id} className="bg-white border rounded-xl overflow-hidden">
                 <div className="p-4 flex flex-col sm:flex-row sm:items-start gap-3">
@@ -388,6 +432,7 @@ export function ConfiguracionesClient({
                       <Badge variant={c.activo ? 'default' : 'secondary'} className="text-xs">
                         {c.activo ? 'Activa' : 'Inactiva'}
                       </Badge>
+                        <span className={`h-3 w-3 rounded-full ${COLORES_ACTUALIZACION[estado]}`} title={`Última actualización: ${formatearFechaActualizacion(ultimaActualizacion)}`} aria-label={`Última actualización: ${formatearFechaActualizacion(ultimaActualizacion)}`} />
                       {c.apto_peritoneal && (
                         <Badge variant="outline" className="text-xs border-blue-300 text-blue-700 bg-blue-50">
                           Apto peritoneal
@@ -395,6 +440,7 @@ export function ConfiguracionesClient({
                       )}
                     </div>
                     <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                      <span>Actualizada: {formatearFechaActualizacion(ultimaActualizacion)}</span>
                       {c.tarifas_bulto.length > 0 && (
                         <span className="flex items-center gap-1"><Package className="h-3.5 w-3.5" />{c.tarifas_bulto.length} tramo{c.tarifas_bulto.length > 1 ? 's' : ''} bultos</span>
                       )}
@@ -442,6 +488,7 @@ export function ConfiguracionesClient({
                               {i === arr.length - 1 ? `Bulto ${t.desde_bulto} en adelante` : `Bulto ${t.desde_bulto}–${arr[i + 1].desde_bulto - 1}`}
                             </span>
                             <span className="font-semibold">{formatearPrecio(t.precio)}</span>
+                            <span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(t.updated_at ?? c.updated_at)}</span>
                           </div>
                         ))}
                       </div>
@@ -457,9 +504,13 @@ export function ConfiguracionesClient({
                                 : `${t.desde_pallet}–${arr[i + 1].desde_pallet} pallets`}
                             </span>
                             <span className="font-semibold">{formatearPrecio(t.precio)}</span>
+                            <span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(t.updated_at ?? c.updated_at)}</span>
                           </div>
                         ))}
                       </div>
+                    )}
+                    {c.precio_camion_completo !== null && (
+                      <div className="flex gap-2 text-sm"><span className="text-muted-foreground w-44">Camión completo</span><span className="font-semibold">{formatearPrecio(c.precio_camion_completo)}</span><span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(c.precio_camion_actualizado_at ?? c.updated_at)}</span></div>
                     )}
                   </div>
                 )}

@@ -35,6 +35,7 @@ export interface ConfiguracionEnvio {
   tiempo_estimado_max_horas: number | null;
   precio_pallet: number | null;
   precio_camion_completo: number | null;
+  precio_camion_actualizado_at?: string | null;
   apto_peritoneal: boolean;
   activo: boolean;
   created_at: string;
@@ -49,6 +50,7 @@ export interface TarifaBulto {
   // Si true: el bulto 1 se cobra siempre (precio inicial fijo) + el resto al tramo vigente.
   // Si false: toda la cantidad se multiplica por el precio del tramo vigente.
   es_valor_inicial: boolean;
+  updated_at?: string;
 }
 
 export interface TarifaPallet {
@@ -56,6 +58,7 @@ export interface TarifaPallet {
   configuracion_id: string;
   desde_pallet: number; // soporta decimales: 0.5, 1, 1.5, 2, etc.
   precio: number;
+  updated_at?: string;
 }
 
 export interface ConfiguracionTag {

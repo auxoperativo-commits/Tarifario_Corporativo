@@ -49,6 +49,7 @@ En el **SQL Editor** de Supabase ejecutá los siguientes scripts en orden:
 4. `supabase/migrations/02_bulto_inicial_y_peritoneal.sql`
 5. `supabase/migrations/03_contacto_transportes.sql` — agrega teléfono y correo a cada transporte
 6. `supabase/migrations/04_roles_y_permisos.sql` — deja solo los roles operario/admin y limita las escrituras al admin
+7. `supabase/migrations/05_actualizacion_precios.sql` — agrega fechas de actualización para bultos, pallets y camión
 
 Para habilitar la creación de usuarios desde **Usuarios**, agregá en el entorno del servidor (Vercel y `.env.local`) la variable privada `SUPABASE_SERVICE_ROLE_KEY`. Se obtiene en Supabase → Settings → API → `service_role`; nunca debe publicarse ni comenzar con `NEXT_PUBLIC_`.
 

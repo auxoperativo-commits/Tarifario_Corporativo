@@ -211,6 +211,7 @@ export function ImportarConfiguracionDialog({ open, onOpenChange, transportes, o
         clavesFinales.add(clave);
       }
       for (const fila of filas) {
+        const fechaActualizacion = new Date().toISOString();
         const { data: configuracion, error: configError } = await supabase.from('configuraciones_envio').insert({
           transporte_id: fila.transporte.id,
           origen_provincia: fila.origen,
@@ -221,14 +222,15 @@ export function ImportarConfiguracionDialog({ open, onOpenChange, transportes, o
           tiempo_estimado_max_horas: null,
           precio_pallet: null,
           precio_camion_completo: null,
+          precio_camion_actualizado_at: null,
           apto_peritoneal: false,
           activo: true,
         }).select('id').single();
         if (configError || !configuracion) throw configError ?? new Error(`No se pudo crear la fila ${fila.fila}.`);
         configuracionesCreadas.push(configuracion.id);
-        const { error: bultoError } = await supabase.from('tarifas_bulto').insert({ configuracion_id: configuracion.id, desde_bulto: 1, precio: fila.precioBulto, es_valor_inicial: false });
+        const { error: bultoError } = await supabase.from('tarifas_bulto').insert({ configuracion_id: configuracion.id, desde_bulto: 1, precio: fila.precioBulto, es_valor_inicial: false, updated_at: fechaActualizacion });
         if (bultoError) throw bultoError;
-        const { error: palletError } = await supabase.from('tarifas_pallet').insert({ configuracion_id: configuracion.id, desde_pallet: 1, precio: fila.precioPallet });
+        const { error: palletError } = await supabase.from('tarifas_pallet').insert({ configuracion_id: configuracion.id, desde_pallet: 1, precio: fila.precioPallet, updated_at: fechaActualizacion });
         if (palletError) throw palletError;
       }
       const primerTransporte = filas[0].transporte.id;

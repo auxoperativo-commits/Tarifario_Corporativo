@@ -55,6 +55,7 @@ create table configuraciones_envio (
 
   -- precio fijo por camion completo
   precio_camion_completo numeric(12,2),
+  precio_camion_actualizado_at timestamptz,
 
   activo boolean not null default true,
   created_at timestamptz not null default now(),
@@ -79,6 +80,7 @@ create table tarifas_bulto (
   configuracion_id uuid not null references configuraciones_envio(id) on delete cascade,
   desde_bulto integer not null check (desde_bulto >= 1),
   precio numeric(12,2) not null check (precio >= 0),
+  updated_at timestamptz not null default now(),
   unique (configuracion_id, desde_bulto)
 );
 

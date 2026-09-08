@@ -2,7 +2,6 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -28,7 +27,7 @@ import {
 import { EmptyState } from '@/components/layout/EmptyState';
 import {
   Search, ArrowLeftRight, Package, Truck, Clock,
-  Star, DollarSign, Loader2, CheckCircle2, Info, Minus, Plus,
+  Star, DollarSign, Loader2, Info, Minus, Plus,
   X,
 } from 'lucide-react';
 
@@ -49,7 +48,6 @@ interface EnviosClientProps {
   configuracionesRaw: unknown[];
   tagsDisponibles: Tag[];
   perfilDefaults: PerfilDefaults | null;
-  userId: string | null;
 }
 
 function buildUbicacion(p: string | null, l: string | null): UbicacionSeleccionada | null {
@@ -65,11 +63,24 @@ function labelPallets(n: number): string {
   return `${n} pallets`;
 }
 
+function estadoActualizacion(fecha: string | null | undefined): { color: string; etiqueta: string } {
+  if (!fecha) return { color: 'bg-red-500', etiqueta: 'Sin fecha registrada' };
+  const dias = (Date.now() - new Date(fecha).getTime()) / 86400000;
+  if (dias <= 30) return { color: 'bg-green-500', etiqueta: 'Actualizada recientemente' };
+  if (dias <= 60) return { color: 'bg-yellow-400', etiqueta: 'Revisar actualización' };
+  return { color: 'bg-red-500', etiqueta: 'Desactualizada' };
+}
+
+function formatearFechaActualizacion(fecha: string | null | undefined): string {
+  return fecha
+    ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(new Date(fecha))
+    : 'Sin fecha registrada';
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaults, userId }: EnviosClientProps) {
+export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaults }: EnviosClientProps) {
   const { toast } = useToast();
-  const supabase = createClient();
 
   // ── Formulario ─────────────────────────────────────────────────────────────
   const [origen, setOrigen] = useState<UbicacionSeleccionada | null>(
@@ -97,8 +108,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
   const [buscando, setBuscando] = useState(false);
   const [orden, setOrden] = useState<OrdenCriterio>('recomendado');
   const [filtroTags, setFiltroTags] = useState<string[]>([]);
-  const [elegidoId, setElegidoId] = useState<string | null>(null);
-  const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
     try {
@@ -152,7 +161,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
     }
 
     setBuscando(true);
-    setElegidoId(null);
     try {
       const busqueda: BusquedaEnvio = {
         origen: origen!,
@@ -212,32 +220,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
     }
     return filtrados;
   }, [resultados, orden, filtroTags]);
-
-  // ── Guardar historial ──────────────────────────────────────────────────────
-  async function elegirYGuardar(resultado: ResultadoEnvio) {
-    setElegidoId(resultado.configuracion.id);
-    if (!userId) return;
-    setGuardando(true);
-    const tipoEnvio = camionCompleto ? 'camion_completo'
-      : incluyeBultos && incluyePallets ? 'mixto'
-      : incluyeBultos ? 'bultos' : 'pallet';
-    await supabase.from('historial_calculos').insert({
-      usuario_id: userId,
-      origen_provincia: origen!.provincia,
-      origen_localidad: origen!.localidad ?? null,
-      destino_provincia: destino!.provincia,
-      destino_localidad: destino!.localidad ?? null,
-      tipo_envio: tipoEnvio,
-      cantidad: incluyeBultos ? cantBultosNum : incluyePallets ? cantPallets : null,
-      transporte_elegido_id: resultado.transporte.id,
-      precio_resultado: resultado.precioTotal,
-    });
-    setGuardando(false);
-    toast({
-      title: `${resultado.transporte.nombre_fantasia || resultado.transporte.razon_social} seleccionado`,
-      description: `${formatearPrecio(resultado.precioTotal)} · ${formatearTiempo(resultado.tiempoMin, resultado.tiempoMax)}`,
-    });
-  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -476,9 +458,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
             <div className="space-y-3">
               {resultadosOrdenados.map((resultado, idx) => (
                 <ResultadoCard key={resultado.configuracion.id} resultado={resultado} posicion={idx}
-                  isElegido={elegidoId === resultado.configuracion.id}
-                  onElegir={() => elegirYGuardar(resultado)}
-                  guardando={guardando && elegidoId === resultado.configuracion.id} />
+                />
               ))}
             </div>
           )}
@@ -493,30 +473,21 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
 interface ResultadoCardProps {
   resultado: ResultadoEnvio;
   posicion: number;
-  isElegido: boolean;
-  onElegir: () => void;
-  guardando: boolean;
 }
 
-function ResultadoCard({ resultado, posicion, isElegido, onElegir, guardando }: ResultadoCardProps) {
+function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
   const { transporte, tags, precioTotal, tiempoMin, tiempoMax, desglose } = resultado;
   const esBest = posicion === 0;
+  const estado = estadoActualizacion(resultado.configuracion.updated_at);
 
   return (
-    <div className={`bg-white border rounded-xl overflow-hidden transition-all ${isElegido ? 'border-green-500 ring-2 ring-green-200' : esBest ? 'border-primary/30 ring-1 ring-primary/10' : ''}`}>
-      {esBest && !isElegido && (
+    <div className={`bg-white border rounded-xl overflow-hidden transition-all ${esBest ? 'border-primary/30 ring-1 ring-primary/10' : ''}`}>
+      {esBest && (
         <div className="bg-primary/5 border-b border-primary/10 px-4 py-1.5 flex items-center gap-1.5">
           <Star className="h-3.5 w-3.5 text-primary fill-primary" />
           <span className="text-xs font-semibold text-primary">Mejor opción</span>
         </div>
       )}
-      {isElegido && (
-        <div className="bg-green-50 border-b border-green-200 px-4 py-1.5 flex items-center gap-1.5">
-          <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-          <span className="text-xs font-semibold text-green-700">Seleccionado</span>
-        </div>
-      )}
-
       <div className="p-4 flex flex-col sm:flex-row gap-4">
         <div className="flex-1 min-w-0 space-y-2">
           <div>
@@ -555,11 +526,14 @@ function ResultadoCard({ resultado, posicion, isElegido, onElegir, guardando }: 
             </div>
           )}
         </div>
-        <div className="shrink-0 flex items-start pt-1">
-          <Button onClick={onElegir} disabled={guardando} variant={isElegido ? 'secondary' : 'default'} className="min-w-[110px]">
-            {guardando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : isElegido ? <CheckCircle2 className="mr-2 h-4 w-4" /> : null}
-            {isElegido ? 'Elegido' : 'Elegir'}
-          </Button>
+        <div className="shrink-0 flex items-start justify-end pt-1">
+          <div className="flex items-center gap-2 text-right" title={estado.etiqueta}>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Actualizada</p>
+              <p className="text-xs font-medium text-slate-600">{formatearFechaActualizacion(resultado.configuracion.updated_at)}</p>
+            </div>
+            <span className={`h-4 w-4 rounded-full ${estado.color} ring-2 ring-white shadow-sm`} aria-label={estado.etiqueta} />
+          </div>
         </div>
       </div>
 
