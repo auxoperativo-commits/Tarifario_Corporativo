@@ -16,7 +16,7 @@ export default async function EnviosPage() {
     supabase
       .from('configuraciones_envio')
       .select(
-        `*, transportes(*), tarifas_bulto(*), tarifas_pallet(*), configuracion_tags(tag_id, tags(*))`
+        `*, transportes(*), tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id, tags(*))`
       )
       .eq('activo', true),
     supabase.from('tags').select('*').order('nombre'),

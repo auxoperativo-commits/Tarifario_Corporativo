@@ -4,6 +4,7 @@ import type {
   Tag,
   TarifaBulto,
   TarifaPallet,
+  TarifaKg,
   ResultadoEnvio,
   DesglosePrecio,
   DesgloseItem,
@@ -16,6 +17,7 @@ import type {
 export interface ConfiguracionConDatos extends ConfiguracionEnvio {
   tarifas_bulto: TarifaBulto[];
   tarifas_pallet: TarifaPallet[];
+  tarifas_kg?: TarifaKg[];
   transportes: Transporte;
   // Los tags vienen anidados desde Supabase como configuracion_tags[].tags
   configuracion_tags?: Array<{ tag_id: string; tags: Tag | null }>;
@@ -46,13 +48,26 @@ export function extraerTags(config: ConfiguracionConDatos): Tag[] {
   return [];
 }
 
+export function formatearUbicacion(
+  ubicacion: Partial<UbicacionSeleccionada> | null | undefined,
+  fallbackProvincia?: string | null,
+  fallbackLocalidad?: string | null
+): string {
+  const provincia = ubicacion?.provincia ?? fallbackProvincia ?? '';
+  const localidad = ubicacion?.localidad ?? fallbackLocalidad ?? '';
+  if (!provincia) return 'Sin ubicación';
+  if (ubicacion?.nombre) return `${provincia} (${ubicacion.nombre})${localidad ? ` · ${localidad}` : ''}`;
+  if (provincia && localidad) return `${provincia} · ${localidad}`;
+  return provincia;
+}
+
 // ── Filtrado de candidatos ─────────────────────────────────────────────────────
 
 export function filtrarConfiguraciones(
   configuraciones: ConfiguracionConDatos[],
   busqueda: BusquedaEnvio
 ): ConfiguracionConDatos[] {
-  const { origen, destino, cantidadBultos, cantidadPallets, camionCompleto } = busqueda;
+  const { origen, destino, cantidadBultos, cantidadPallets, cantidadKg, camionCompleto } = busqueda;
   const activas = configuraciones.filter((c) => c.activo);
 
   // Matchear ruta
@@ -77,6 +92,7 @@ export function filtrarConfiguraciones(
     return matcheadoras.filter((c) => {
       if (cantidadBultos > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
       if (cantidadPallets > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
+      if (cantidadKg > 0 && (!c.tarifas_kg || c.tarifas_kg.length === 0)) return false;
       if (camionCompleto && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
       return !busqueda.soloPeritoneal || c.apto_peritoneal;
     });
@@ -101,6 +117,7 @@ export function filtrarConfiguraciones(
   return Array.from(porTransporte.values()).filter((c) => {
     if (cantidadBultos > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
     if (cantidadPallets > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
+    if (cantidadKg > 0 && (!c.tarifas_kg || c.tarifas_kg.length === 0)) return false;
     if (camionCompleto && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
     if (busqueda.soloPeritoneal && !c.apto_peritoneal) return false;
     return true;
@@ -128,6 +145,13 @@ export function calcularPrecio(
     const desglosePallets = calcularPallets(config.tarifas_pallet, busqueda.cantidadPallets);
     items.push(...desglosePallets.items);
     total += desglosePallets.total;
+  }
+
+  // Kg
+  if (busqueda.cantidadKg > 0) {
+    const desgloseKg = calcularKg(config.tarifas_kg ?? [], busqueda.cantidadKg);
+    items.push(...desgloseKg.items);
+    total += desgloseKg.total;
   }
 
   // Camión completo
@@ -209,6 +233,27 @@ function calcularBultos(
   return { items, total };
 }
 
+function calcularKg(
+  tarifas: TarifaKg[],
+  cantidad: number
+): DesglosePrecio {
+  if (tarifas.length === 0) return { items: [], total: 0 };
+
+  const tramosAsc = [...tarifas].sort((a, b) => a.desde_kg - b.desde_kg);
+  const tramo = [...tramosAsc].reverse().find((t) => t.desde_kg <= cantidad) ?? tramosAsc[0];
+  const subtotal = tramo.precio;
+
+  return {
+    items: [{
+      descripcion: `${formatearCantidad(cantidad)} kg (tramo desde ${tramo.desde_kg} kg)`,
+      precio: tramo.precio,
+      cantidad,
+      subtotal,
+    }],
+    total: subtotal,
+  };
+}
+
 function calcularPallets(
   tarifas: TarifaPallet[],
   cantidad: number
@@ -256,6 +301,12 @@ export function calcularRanking(
   candidatos: Array<{
     config: ConfiguracionConDatos;
     desglose: DesglosePrecio;
+    origenSeleccionado?: UbicacionSeleccionada;
+    destinoSeleccionado?: UbicacionSeleccionada;
+    cantidadBultos?: number;
+    cantidadPallets?: number;
+    cantidadKg?: number;
+    camionCompleto?: boolean;
   }>
 ): ResultadoEnvio[] {
   if (candidatos.length === 0) return [];
@@ -286,6 +337,12 @@ export function calcularRanking(
         tiempoMax: c.config.tiempo_estimado_max_horas,
         score,
         desglose: c.desglose,
+        origenSeleccionado: c.origenSeleccionado,
+        destinoSeleccionado: c.destinoSeleccionado,
+        cantidadBultos: c.cantidadBultos,
+        cantidadPallets: c.cantidadPallets,
+        cantidadKg: c.cantidadKg,
+        camionCompleto: c.camionCompleto,
       };
     })
     .sort((a, b) => a.score - b.score);

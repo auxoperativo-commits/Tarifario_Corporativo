@@ -3,6 +3,8 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
+import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/lib/context/UserContext';
 import { useToast } from '@/hooks/use-toast';
 import {
   filtrarConfiguraciones,
@@ -14,7 +16,7 @@ import {
   type ConfiguracionConDatos,
 } from '@/lib/calculos/envios';
 import type {
-  Tag, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio,
+  Tag, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio, UbicacionPersonalizada, Contenedor,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -28,8 +30,14 @@ import { EmptyState } from '@/components/layout/EmptyState';
 import {
   Search, ArrowLeftRight, Package, Truck, Clock,
   Star, DollarSign, Loader2, Info, Minus, Plus,
-  X,
+  X, BriefcaseBusiness, Weight,
 } from 'lucide-react';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -63,12 +71,8 @@ function labelPallets(n: number): string {
   return `${n} pallets`;
 }
 
-function estadoActualizacion(fecha: string | null | undefined): { color: string; etiqueta: string } {
-  if (!fecha) return { color: 'bg-red-500', etiqueta: 'Sin fecha registrada' };
-  const dias = (Date.now() - new Date(fecha).getTime()) / 86400000;
-  if (dias <= 30) return { color: 'bg-green-500', etiqueta: 'Actualizada recientemente' };
-  if (dias <= 60) return { color: 'bg-yellow-400', etiqueta: 'Revisar actualización' };
-  return { color: 'bg-red-500', etiqueta: 'Desactualizada' };
+function labelKg(n: number): string {
+  return `${n} kg`;
 }
 
 function formatearFechaActualizacion(fecha: string | null | undefined): string {
@@ -77,10 +81,40 @@ function formatearFechaActualizacion(fecha: string | null | undefined): string {
     : 'Sin fecha registrada';
 }
 
+function estadoActualizacion(fecha: string | null | undefined): { etiqueta: string; color: string } {
+  if (!fecha) {
+    return { etiqueta: 'Sin actualización registrada', color: 'bg-red-500' };
+  }
+
+  const dias = (Date.now() - new Date(fecha).getTime()) / 86400000;
+  if (dias <= 30) return { etiqueta: 'Actualización vigente', color: 'bg-green-500' };
+  if (dias <= 60) return { etiqueta: 'Revisar actualización', color: 'bg-yellow-400' };
+  return { etiqueta: 'Desactualizado', color: 'bg-red-500' };
+}
+
+function formatearUbicacionPersonalizada(
+  ubicacion: Partial<UbicacionSeleccionada> | null | undefined,
+  fallbackProvincia?: string | null,
+  fallbackLocalidad?: string | null
+): string {
+  const provincia = ubicacion?.provincia ?? fallbackProvincia ?? '';
+  const localidad = ubicacion?.localidad ?? fallbackLocalidad ?? '';
+  const nombre = ubicacion?.nombre;
+
+  if (!provincia) return 'Sin ubicación';
+  if (nombre) {
+    return `${provincia} (${nombre})${localidad ? ` · ${localidad}` : ''}`;
+  }
+  if (provincia && localidad) return `${provincia} · ${localidad}`;
+  return provincia;
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaults }: EnviosClientProps) {
   const { toast } = useToast();
+  const { perfil } = useUser();
+  const supabase = createClient();
 
   // ── Formulario ─────────────────────────────────────────────────────────────
   const [origen, setOrigen] = useState<UbicacionSeleccionada | null>(
@@ -98,6 +132,10 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
   const [incluyePallets, setIncluyePallets] = useState(false);
   const [cantPallets, setCantPallets] = useState<number>(1);
 
+  // Kg: activado/desactivado + cantidad libre
+  const [incluyeKg, setIncluyeKg] = useState(false);
+  const [cantKgStr, setCantKgStr] = useState('1');
+
   // Camión completo
   const [camionCompleto, setCamionCompleto] = useState(false);
   // Peritoneal
@@ -108,6 +146,30 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
   const [buscando, setBuscando] = useState(false);
   const [orden, setOrden] = useState<OrdenCriterio>('recomendado');
   const [filtroTags, setFiltroTags] = useState<string[]>([]);
+  const [ubicacionesPersonalizadas, setUbicacionesPersonalizadas] = useState<UbicacionPersonalizada[]>([]);
+  const [contenedores, setContenedores] = useState<Contenedor[]>([]);
+  const [contenedorDialogOpen, setContenedorDialogOpen] = useState(false);
+  const [resultadoSeleccionado, setResultadoSeleccionado] = useState<ResultadoEnvio | null>(null);
+  const [contenedorDestinoId, setContenedorDestinoId] = useState<string>('');
+  const [nuevoContenedorNombre, setNuevoContenedorNombre] = useState('');
+  const [guardandoContenedor, setGuardandoContenedor] = useState(false);
+
+  useEffect(() => {
+    async function cargarDatosUsuario() {
+      try {
+        const [{ data: ubicaciones }, { data: contenedoresData }] = await Promise.all([
+          supabase.from('ubicaciones_personalizadas').select('*').eq('usuario_id', perfil.id).order('nombre'),
+          supabase.from('contenedores').select('*').eq('usuario_id', perfil.id).order('created_at', { ascending: false }),
+        ]);
+        setUbicacionesPersonalizadas((ubicaciones ?? []) as UbicacionPersonalizada[]);
+        setContenedores((contenedoresData ?? []) as Contenedor[]);
+      } catch {
+        setUbicacionesPersonalizadas([]);
+        setContenedores([]);
+      }
+    }
+    cargarDatosUsuario();
+  }, [perfil.id, supabase]);
 
   useEffect(() => {
     try {
@@ -121,6 +183,8 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         cantBultosStr: string;
         incluyePallets: boolean;
         cantPallets: number;
+        incluyeKg: boolean;
+        cantKgStr: string;
         camionCompleto: boolean;
         soloPeritoneal: boolean;
         resultados: ResultadoEnvio[] | null;
@@ -134,6 +198,8 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
       setCantBultosStr(estado.cantBultosStr);
       setIncluyePallets(estado.incluyePallets);
       setCantPallets(estado.cantPallets);
+      setIncluyeKg(estado.incluyeKg ?? false);
+      setCantKgStr(estado.cantKgStr ?? '1');
       setCamionCompleto(estado.camionCompleto);
       setSoloPeritoneal(estado.soloPeritoneal);
       setResultados(estado.resultados);
@@ -148,14 +214,15 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
     const tmp = origen; setOrigen(destino); setDestino(tmp);
   }
 
-  // ── Validar cantidad de bultos ─────────────────────────────────────────────
+  // ── Validar cantidades ─────────────────────────────────────────────────────
   const cantBultosNum = Math.max(1, parseInt(cantBultosStr) || 1);
+  const cantKgNum = Math.max(1, parseFloat(cantKgStr) || 1);
 
   // ── Buscar ─────────────────────────────────────────────────────────────────
   const buscar = useCallback(() => {
     if (!origen?.provincia) { toast({ variant: 'destructive', title: 'Seleccioná el origen.' }); return; }
     if (!destino?.provincia) { toast({ variant: 'destructive', title: 'Seleccioná el destino.' }); return; }
-    if (!incluyeBultos && !incluyePallets && !camionCompleto) {
+    if (!incluyeBultos && !incluyePallets && !incluyeKg && !camionCompleto) {
       toast({ variant: 'destructive', title: 'Indicá al menos un tipo de carga.' });
       return;
     }
@@ -167,6 +234,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         destino: destino!,
         cantidadBultos: incluyeBultos ? cantBultosNum : 0,
         cantidadPallets: incluyePallets ? cantPallets : 0,
+        cantidadKg: incluyeKg ? cantKgNum : 0,
         camionCompleto,
         soloPeritoneal,
       };
@@ -179,6 +247,12 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
       const conPrecios = candidatos.map((config) => ({
         config,
         desglose: calcularPrecio(config, busqueda),
+        origenSeleccionado: origen,
+        destinoSeleccionado: destino,
+        cantidadBultos: incluyeBultos ? cantBultosNum : 0,
+        cantidadPallets: incluyePallets ? cantPallets : 0,
+        cantidadKg: incluyeKg ? cantKgNum : 0,
+        camionCompleto,
       }));
       const nuevosResultados = calcularRanking(conPrecios);
       setResultados(nuevosResultados);
@@ -190,6 +264,8 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         cantBultosStr,
         incluyePallets,
         cantPallets,
+        incluyeKg,
+        cantKgStr,
         camionCompleto,
         soloPeritoneal,
         resultados: nuevosResultados,
@@ -201,7 +277,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
     } finally {
       setBuscando(false);
     }
-  }, [origen, destino, incluyeBultos, cantBultosStr, cantBultosNum, incluyePallets, cantPallets, camionCompleto, soloPeritoneal, filtroTags, configuracionesRaw, toast]);
+  }, [origen, destino, incluyeBultos, cantBultosStr, cantBultosNum, incluyePallets, cantPallets, incluyeKg, cantKgStr, cantKgNum, camionCompleto, soloPeritoneal, filtroTags, configuracionesRaw, toast]);
 
   // ── Ordenar / filtrar resultados ───────────────────────────────────────────
   const resultadosOrdenados = useMemo(() => {
@@ -228,14 +304,52 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
 
         {/* Origen / Destino */}
         <div className="flex flex-col sm:flex-row gap-3 items-end">
-          <div className="flex-1">
+          <div className="flex-1 space-y-2">
             <GeorefCombobox label="Origen" value={origen} onChange={setOrigen} placeholder="Seleccionar provincia..." />
+            {ubicacionesPersonalizadas.length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Usar ubicación personalizada</Label>
+                <Select value="" onValueChange={(value) => {
+                  const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
+                  if (!ubicacion) return;
+                  setOrigen({ provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' });
+                }}>
+                  <SelectTrigger className="w-full h-9">
+                    <SelectValue placeholder="Seleccionar ubicación personalizada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ubicacionesPersonalizadas.map((ubicacion) => (
+                      <SelectItem key={ubicacion.id} value={ubicacion.id}>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <Button type="button" variant="outline" size="icon" onClick={swap} className="shrink-0 mb-0.5" aria-label="Intercambiar">
             <ArrowLeftRight className="h-4 w-4" />
           </Button>
-          <div className="flex-1">
+          <div className="flex-1 space-y-2">
             <GeorefCombobox label="Destino" value={destino} onChange={setDestino} placeholder="Seleccionar provincia..." />
+            {ubicacionesPersonalizadas.length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Usar ubicación personalizada</Label>
+                <Select value="" onValueChange={(value) => {
+                  const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
+                  if (!ubicacion) return;
+                  setDestino({ provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' });
+                }}>
+                  <SelectTrigger className="w-full h-9">
+                    <SelectValue placeholder="Seleccionar ubicación personalizada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ubicacionesPersonalizadas.map((ubicacion) => (
+                      <SelectItem key={ubicacion.id} value={ubicacion.id}>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </div>
 
@@ -244,7 +358,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         {/* Carga */}
         <div>
           <Label className="mb-3 block text-sm font-medium">¿Qué vas a enviar?</Label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
 
             {/* ── Bultos ── */}
             <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeBultos ? 'border-primary bg-primary/5' : 'border-border'}`}>
@@ -337,6 +451,47 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
               )}
             </div>
 
+            {/* ── KG ── */}
+            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeKg ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <button
+                type="button"
+                className="w-full flex items-center justify-between mb-2"
+                onClick={() => setIncluyeKg((v) => !v)}
+              >
+                <div className="flex items-center gap-2">
+                  <Weight className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Kg</span>
+                </div>
+                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyeKg ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                  {incluyeKg && <span className="text-white text-xs font-bold">✓</span>}
+                </span>
+              </button>
+              {incluyeKg && (
+                <div className="flex items-center gap-1 mt-1">
+                  <button type="button" onClick={() => setCantKgStr(String(Math.max(1, cantKgNum - 1))) }
+                    className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <Input
+                    type="number" min={1}
+                    value={cantKgStr}
+                    onChange={(e) => setCantKgStr(e.target.value)}
+                    onBlur={() => setCantKgStr(String(Math.max(1, parseFloat(cantKgStr) || 1)))}
+                    className="h-8 text-sm text-center"
+                  />
+                  <button type="button" onClick={() => setCantKgStr(String(cantKgNum + 1)) }
+                    className="h-8 w-8 rounded border flex items-center justify-center hover:bg-slate-100 shrink-0">
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+              {incluyeKg && (
+                <p className="text-xs text-muted-foreground mt-1.5 text-center">
+                  {labelKg(cantKgNum)}
+                </p>
+              )}
+            </div>
+
             {/* ── Camión completo ── */}
             <div className={`rounded-xl border-2 p-3 transition-colors ${camionCompleto ? 'border-primary bg-primary/5' : 'border-border'}`}>
               <button
@@ -381,7 +536,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
           )}
 
           {/* Resumen */}
-          {(incluyeBultos || incluyePallets || camionCompleto) && (
+          {(incluyeBultos || incluyePallets || incluyeKg || camionCompleto) && (
             <div className="mt-3 flex flex-wrap gap-2">
               {incluyeBultos && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
@@ -391,6 +546,11 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
               {incluyePallets && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
                   <span className="text-[10px] font-bold">P</span>{labelPallets(cantPallets)}
+                </span>
+              )}
+              {incluyeKg && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
+                  <Weight className="h-3 w-3" />{labelKg(cantKgNum)}
                 </span>
               )}
               {camionCompleto && (
@@ -479,6 +639,71 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
   const { transporte, tags, precioTotal, tiempoMin, tiempoMax, desglose } = resultado;
   const esBest = posicion === 0;
   const estado = estadoActualizacion(resultado.configuracion.updated_at);
+  const { toast } = useToast();
+  const { perfil } = useUser();
+  const supabase = createClient();
+  const [contenedores, setContenedores] = useState<Contenedor[]>([]);
+  const [contenedorDialogOpen, setContenedorDialogOpen] = useState(false);
+  const [contenedorDestinoId, setContenedorDestinoId] = useState('');
+  const [nuevoContenedorNombre, setNuevoContenedorNombre] = useState('');
+  const [guardandoContenedor, setGuardandoContenedor] = useState(false);
+
+  useEffect(() => {
+    async function cargarContenedores() {
+      const { data } = await supabase.from('contenedores').select('*').eq('usuario_id', perfil.id).order('created_at', { ascending: false });
+      setContenedores((data ?? []) as Contenedor[]);
+    }
+    cargarContenedores();
+  }, [perfil.id, supabase]);
+
+  async function agregarAlContenedor() {
+    if (!contenedorDestinoId && !nuevoContenedorNombre.trim()) {
+      toast({ variant: 'destructive', title: 'Seleccioná o creá un contenedor.' });
+      return;
+    }
+
+    setGuardandoContenedor(true);
+    try {
+      let contenedorId = contenedorDestinoId;
+      if (!contenedorId && nuevoContenedorNombre.trim()) {
+        const { data, error } = await supabase.from('contenedores').insert({
+          usuario_id: perfil.id,
+          nombre: nuevoContenedorNombre.trim(),
+        }).select().single();
+        if (error) throw error;
+        contenedorId = data.id;
+      }
+
+      const origenLabel = formatearUbicacionPersonalizada(resultado.origenSeleccionado ?? { provincia: resultado.configuracion.origen_provincia, localidad: resultado.configuracion.origen_localidad }, resultado.configuracion.origen_provincia, resultado.configuracion.origen_localidad);
+      const destinoLabel = formatearUbicacionPersonalizada(resultado.destinoSeleccionado ?? { provincia: resultado.configuracion.destino_provincia, localidad: resultado.configuracion.destino_localidad }, resultado.configuracion.destino_provincia, resultado.configuracion.destino_localidad);
+
+      const { error } = await supabase.from('contenedor_cotizaciones').insert({
+        contenedor_id: contenedorId,
+        configuracion_id: resultado.configuracion.id,
+        transporte_id: transporte.id,
+        transporte_nombre: transporte.nombre_fantasia || transporte.razon_social,
+        origen_provincia: resultado.origenSeleccionado?.provincia ?? resultado.configuracion.origen_provincia,
+        origen_localidad: resultado.origenSeleccionado?.localidad ?? resultado.configuracion.origen_localidad,
+        destino_provincia: resultado.destinoSeleccionado?.provincia ?? resultado.configuracion.destino_provincia,
+        destino_localidad: resultado.destinoSeleccionado?.localidad ?? resultado.configuracion.destino_localidad,
+        precio_total: precioTotal,
+        cantidad_bultos: resultado.cantidadBultos ?? 0,
+        cantidad_pallets: resultado.cantidadPallets ?? 0,
+        cantidad_kg: resultado.cantidadKg ?? 0,
+        descripcion: `${transporte.nombre_fantasia || transporte.razon_social} · ${origenLabel} → ${destinoLabel}`,
+      });
+      if (error) throw error;
+
+      toast({ title: 'Cotización agregada al contenedor.' });
+      setContenedorDialogOpen(false);
+      setContenedorDestinoId('');
+      setNuevoContenedorNombre('');
+    } catch {
+      toast({ variant: 'destructive', title: 'No se pudo guardar la cotización.' });
+    } finally {
+      setGuardandoContenedor(false);
+    }
+  }
 
   return (
     <div className={`bg-white border rounded-xl overflow-hidden transition-all ${esBest ? 'border-primary/30 ring-1 ring-primary/10' : ''}`}>
@@ -496,9 +721,9 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
             </Link>
             {transporte.nombre_fantasia && <p className="text-xs text-muted-foreground">{transporte.razon_social}</p>}
             <p className="mt-1 text-xs text-muted-foreground">
-              {resultado.configuracion.origen_localidad || resultado.configuracion.origen_provincia}
+              {formatearUbicacionPersonalizada(resultado.origenSeleccionado ?? { provincia: resultado.configuracion.origen_provincia, localidad: resultado.configuracion.origen_localidad }, resultado.configuracion.origen_provincia, resultado.configuracion.origen_localidad)}
               <span className="mx-1.5 text-slate-400">→</span>
-              {resultado.configuracion.destino_localidad || resultado.configuracion.destino_provincia}
+              {formatearUbicacionPersonalizada(resultado.destinoSeleccionado ?? { provincia: resultado.configuracion.destino_provincia, localidad: resultado.configuracion.destino_localidad }, resultado.configuracion.destino_provincia, resultado.configuracion.destino_localidad)}
             </p>
           </div>
           <div className="flex flex-wrap items-baseline gap-4">
@@ -526,7 +751,10 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
             </div>
           )}
         </div>
-        <div className="shrink-0 flex items-start justify-end pt-1">
+        <div className="shrink-0 flex items-center gap-2 pt-1">
+          <Button type="button" variant="outline" size="sm" onClick={() => setContenedorDialogOpen(true)} className="shrink-0">
+            <BriefcaseBusiness className="mr-2 h-3.5 w-3.5" />Agregar al contenedor
+          </Button>
           <div className="flex items-center gap-2 text-right" title={estado.etiqueta}>
             <div>
               <p className="text-[11px] text-muted-foreground">Actualizada</p>
@@ -536,6 +764,41 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
           </div>
         </div>
       </div>
+
+      <Dialog open={contenedorDialogOpen} onOpenChange={setContenedorDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Agregar cotización al contenedor</DialogTitle>
+            <DialogDescription>Guardá esta opción en uno de tus contenedores personales.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Elegí un contenedor</Label>
+              <Select value={contenedorDestinoId} onValueChange={setContenedorDestinoId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar contenedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {contenedores.map((contenedor) => (
+                    <SelectItem key={contenedor.id} value={contenedor.id}>{contenedor.nombre}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">O crear uno nuevo</Label>
+              <Input value={nuevoContenedorNombre} onChange={(event) => setNuevoContenedorNombre(event.target.value)} placeholder="Ej: Envío a Hospital Córdoba 11/9" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setContenedorDialogOpen(false)} disabled={guardandoContenedor}>Cancelar</Button>
+            <Button onClick={agregarAlContenedor} disabled={guardandoContenedor}>
+              {guardandoContenedor ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <BriefcaseBusiness className="mr-2 h-4 w-4" />}
+              Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Accordion type="single" collapsible>
         <AccordionItem value="d" className="border-t border-dashed">

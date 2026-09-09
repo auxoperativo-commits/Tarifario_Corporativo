@@ -23,7 +23,7 @@ export default async function ConfiguracionesPage({
   if (params.transporte) {
     const { data } = await supabase
       .from('configuraciones_envio')
-      .select(`*, tarifas_bulto(*), tarifas_pallet(*), configuracion_tags(tag_id)`)
+      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id)`)
       .eq('transporte_id', params.transporte)
       .order('created_at', { ascending: false });
     configuracionesIniciales = data ?? [];

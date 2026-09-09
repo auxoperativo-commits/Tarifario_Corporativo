@@ -11,7 +11,7 @@ import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
   Transporte, Tag, ConfiguracionEnvio,
-  TarifaBulto, TarifaPallet, UbicacionSeleccionada,
+  TarifaBulto, TarifaPallet, TarifaKg, UbicacionSeleccionada, UbicacionPersonalizada,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search,
+  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search, Weight,
 } from 'lucide-react';
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
@@ -45,7 +45,8 @@ interface TramoForm {
 
 interface ConfiguracionConRelaciones extends ConfiguracionEnvio {
   tarifas_bulto: TarifaBulto[];
-  tarifas_pallet?: TarifaPallet[]; // opcional hasta que se ejecute la migración SQL
+  tarifas_pallet?: TarifaPallet[];
+  tarifas_kg?: TarifaKg[];
   configuracion_tags: { tag_id: string }[];
 }
 
@@ -59,6 +60,7 @@ interface FormData {
   aptoPeritoneal: boolean;
   tramosBulto: TramoForm[];
   tramosPallet: TramoForm[];
+  tramosKg: TramoForm[];
   tagIds: string[];
 }
 
@@ -84,6 +86,21 @@ function formatearFechaActualizacion(fecha: string | null): string {
     : 'Sin fecha registrada';
 }
 
+function formatearRutaConNombre(
+  ubicacion: Partial<UbicacionSeleccionada> | null | undefined,
+  fallbackProvincia?: string | null,
+  fallbackLocalidad?: string | null
+): string {
+  const provincia = ubicacion?.provincia ?? fallbackProvincia ?? '';
+  const localidad = ubicacion?.localidad ?? fallbackLocalidad ?? '';
+  const nombre = ubicacion?.nombre;
+
+  if (!provincia) return 'Sin ubicación';
+  if (nombre) return `${provincia} (${nombre})${localidad ? ` · ${localidad}` : ''}`;
+  if (provincia && localidad) return `${provincia} · ${localidad}`;
+  return provincia;
+}
+
 const COLORES_ACTUALIZACION: Record<EstadoActualizacion, string> = {
   vigente: 'bg-green-500',
   atencion: 'bg-yellow-400',
@@ -100,6 +117,7 @@ const FORM_VACIO: FormData = {
   aptoPeritoneal: false,
   tramosBulto: [{ desde: 1, precio: '', esValorInicial: false }],
   tramosPallet: [{ desde: 1, precio: '' }],
+  tramosKg: [{ desde: 1, precio: '' }],
   tagIds: [],
 };
 
@@ -140,13 +158,29 @@ export function ConfiguracionesClient({
   const [creandoTag, setCreandoTag] = useState(false);
   const [importarOpen, setImportarOpen] = useState(false);
   const [filtroConfiguraciones, setFiltroConfiguraciones] = useState('');
+  const [ubicacionesPersonalizadas, setUbicacionesPersonalizadas] = useState<UbicacionPersonalizada[]>([]);
+  const [nuevaUbicacion, setNuevaUbicacion] = useState({ nombre: '', provincia: '', localidad: '' });
+  const [ubicacionEditandoId, setUbicacionEditandoId] = useState<string | null>(null);
+  const [guardandoUbicacion, setGuardandoUbicacion] = useState(false);
+
+  useEffect(() => {
+    async function cargarUbicaciones() {
+      try {
+        const { data } = await supabase.from('ubicaciones_personalizadas').select('*').eq('usuario_id', perfil.id).order('nombre');
+        setUbicacionesPersonalizadas((data ?? []) as UbicacionPersonalizada[]);
+      } catch {
+        setUbicacionesPersonalizadas([]);
+      }
+    }
+    cargarUbicaciones();
+  }, [perfil.id, supabase]);
 
   const cargar = useCallback(async (tid: string) => {
     if (!tid) { setConfigs([]); return; }
     setLoading(true);
     const { data, error } = await supabase
       .from('configuraciones_envio')
-      .select(`*, tarifas_bulto(*), tarifas_pallet(*), configuracion_tags(tag_id)`)
+      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id)`)
       .eq('transporte_id', tid)
       .order('created_at', { ascending: false });
     if (error) toast({ variant: 'destructive', title: 'Error al cargar configuraciones.' });
@@ -181,6 +215,13 @@ export function ConfiguracionesClient({
           }))
         : [{ desde: 1, precio: '' }];
 
+    const toTramosKg = (arr: TarifaKg[]): TramoForm[] =>
+      arr.length > 0
+        ? [...arr].sort((a, b) => a.desde_kg - b.desde_kg).map((t) => ({
+            id: t.id, desde: t.desde_kg, precio: t.precio,
+          }))
+        : [{ desde: 1, precio: '' }];
+
     setForm({
       origen: { provincia: c.origen_provincia, localidad: c.origen_localidad ?? null },
       destino: { provincia: c.destino_provincia, localidad: c.destino_localidad ?? null },
@@ -191,6 +232,7 @@ export function ConfiguracionesClient({
       aptoPeritoneal: c.apto_peritoneal ?? false,
       tramosBulto: toTramosBulto(c.tarifas_bulto),
       tramosPallet: toTramosPallet(c.tarifas_pallet ?? []),
+      tramosKg: toTramosKg(c.tarifas_kg ?? []),
       tagIds: c.configuracion_tags.map((ct) => ct.tag_id),
     });
     setEditandoId(c.id);
@@ -198,11 +240,11 @@ export function ConfiguracionesClient({
   }
 
   // ── Tramos genérico ───────────────────────────────────────────────────────
-  function addTramo(campo: 'tramosBulto' | 'tramosPallet') {
+  function addTramo(campo: 'tramosBulto' | 'tramosPallet' | 'tramosKg') {
     setForm((f) => ({ ...f, [campo]: [...f[campo], { desde: '', precio: '' }] }));
   }
 
-  function updTramo(campo: 'tramosBulto' | 'tramosPallet', idx: number, k: 'desde' | 'precio', v: string) {
+  function updTramo(campo: 'tramosBulto' | 'tramosPallet' | 'tramosKg', idx: number, k: 'desde' | 'precio', v: string) {
     setForm((f) => {
       const arr = [...f[campo]];
       arr[idx] = { ...arr[idx], [k]: v === '' ? '' : Number(v) };
@@ -210,7 +252,7 @@ export function ConfiguracionesClient({
     });
   }
 
-  function delTramo(campo: 'tramosBulto' | 'tramosPallet', idx: number) {
+  function delTramo(campo: 'tramosBulto' | 'tramosPallet' | 'tramosKg', idx: number) {
     setForm((f) => ({ ...f, [campo]: f[campo].filter((_, i) => i !== idx) }));
   }
 
@@ -240,7 +282,7 @@ export function ConfiguracionesClient({
     if (!form.origen?.provincia) return 'Seleccioná el origen.';
     if (!form.destino?.provincia) return 'Seleccioná el destino.';
 
-    for (const [campo, label] of [['tramosBulto', 'bulto'], ['tramosPallet', 'pallet']] as const) {
+    for (const [campo, label] of [['tramosBulto', 'bulto'], ['tramosPallet', 'pallet'], ['tramosKg', 'kg']] as const) {
       const filled = form[campo].filter((t) => t.desde !== '' && t.precio !== '');
       const desdes = filled.map((t) => t.desde);
       if (new Set(desdes).size !== desdes.length) return `Hay valores "desde ${label}" repetidos.`;
@@ -310,8 +352,20 @@ export function ConfiguracionesClient({
           );
         }
       } catch {
-        // La tabla tarifas_pallet todavía no existe en la DB — ejecutar 01_tarifas_pallet.sql
         console.warn('tarifas_pallet no encontrada. Ejecutar supabase/migrations/01_tarifas_pallet.sql');
+      }
+
+      // tarifas_kg
+      try {
+        await supabase.from('tarifas_kg').delete().eq('configuracion_id', configId);
+        const kgFilled = form.tramosKg.filter((t) => t.desde !== '' && t.precio !== '');
+        if (kgFilled.length > 0) {
+          await supabase.from('tarifas_kg').insert(
+            kgFilled.map((t) => ({ configuracion_id: configId, desde_kg: Number(t.desde), precio: Number(t.precio), updated_at: fechaActualizacion }))
+          );
+        }
+      } catch {
+        console.warn('tarifas_kg no encontrada. Ejecutar supabase/migrations/06_tarifas_kg.sql');
       }
 
       // tags
@@ -361,6 +415,65 @@ export function ConfiguracionesClient({
     await cargar(tid);
   }
 
+  async function guardarUbicacionPersonalizada() {
+    if (!nuevaUbicacion.nombre.trim() || !nuevaUbicacion.provincia.trim()) {
+      toast({ variant: 'destructive', title: 'Completá nombre y provincia.' });
+      return;
+    }
+
+    setGuardandoUbicacion(true);
+    try {
+      if (ubicacionEditandoId) {
+        const { data, error } = await supabase.from('ubicaciones_personalizadas')
+          .update({
+            nombre: nuevaUbicacion.nombre.trim(),
+            provincia: nuevaUbicacion.provincia.trim(),
+            localidad: nuevaUbicacion.localidad.trim() || null,
+          })
+          .eq('id', ubicacionEditandoId)
+          .select().single();
+        if (error) throw error;
+        setUbicacionesPersonalizadas((prev) => prev.map((item) => item.id === data.id ? data as UbicacionPersonalizada : item));
+        toast({ title: 'Ubicación personalizada actualizada.' });
+      } else {
+        const { data, error } = await supabase.from('ubicaciones_personalizadas').insert({
+          usuario_id: perfil.id,
+          nombre: nuevaUbicacion.nombre.trim(),
+          provincia: nuevaUbicacion.provincia.trim(),
+          localidad: nuevaUbicacion.localidad.trim() || null,
+        }).select().single();
+        if (error) throw error;
+        setUbicacionesPersonalizadas((prev) => [...prev, data as UbicacionPersonalizada]);
+        toast({ title: 'Ubicación personalizada creada.' });
+      }
+      setNuevaUbicacion({ nombre: '', provincia: '', localidad: '' });
+      setUbicacionEditandoId(null);
+    } catch {
+      toast({ variant: 'destructive', title: ubicacionEditandoId ? 'No se pudo actualizar la ubicación.' : 'No se pudo crear la ubicación.' });
+    } finally {
+      setGuardandoUbicacion(false);
+    }
+  }
+
+  async function eliminarUbicacionPersonalizada(id: string) {
+    const { error } = await supabase.from('ubicaciones_personalizadas').delete().eq('id', id);
+    if (error) {
+      toast({ variant: 'destructive', title: 'No se pudo eliminar la ubicación.' });
+      return;
+    }
+    setUbicacionesPersonalizadas((prev) => prev.filter((item) => item.id !== id));
+    if (ubicacionEditandoId === id) {
+      setUbicacionEditandoId(null);
+      setNuevaUbicacion({ nombre: '', provincia: '', localidad: '' });
+    }
+    toast({ title: 'Ubicación personalizada eliminada.' });
+  }
+
+  function editarUbicacionPersonalizada(item: UbicacionPersonalizada) {
+    setUbicacionEditandoId(item.id);
+    setNuevaUbicacion({ nombre: item.nombre, provincia: item.provincia, localidad: item.localidad ?? '' });
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -383,6 +496,47 @@ export function ConfiguracionesClient({
           {transporteId && editar && <Button onClick={abrirNuevo} className="shrink-0"><Plus className="mr-2 h-4 w-4" />Agregar configuración</Button>}
           {editar && <Button variant="outline" onClick={() => setImportarOpen(true)} className="shrink-0"><Upload className="mr-2 h-4 w-4" />Importar configuración</Button>}
         </div>
+      </div>
+
+      <div className="bg-white border rounded-xl p-4 mb-6 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">Crear ubicación</p>
+            <p className="text-xs text-muted-foreground">Usá rutas personalizadas para destinos no georreferenciados.</p>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-[1.2fr_1fr_1fr_auto]">
+          <Input value={nuevaUbicacion.nombre} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, nombre: event.target.value }))} placeholder="Nombre de la ubicación" />
+          <Input value={nuevaUbicacion.provincia} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, provincia: event.target.value }))} placeholder="Provincia" />
+          <Input value={nuevaUbicacion.localidad} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, localidad: event.target.value }))} placeholder="Localidad (opcional)" />
+          <div className="flex gap-2">
+            <Button onClick={guardarUbicacionPersonalizada} disabled={guardandoUbicacion} variant="outline" className="flex-1">
+              {guardandoUbicacion ? <Loader2 className="h-4 w-4 animate-spin" /> : ubicacionEditandoId ? 'Actualizar' : 'Guardar'}
+            </Button>
+            {ubicacionEditandoId && (
+              <Button variant="ghost" onClick={() => { setUbicacionEditandoId(null); setNuevaUbicacion({ nombre: '', provincia: '', localidad: '' }); }} className="px-2">
+                Cancelar
+              </Button>
+            )}
+          </div>
+        </div>
+        {ubicacionesPersonalizadas.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {ubicacionesPersonalizadas.map((ubicacion) => (
+              <span key={ubicacion.id} className="inline-flex items-center gap-2 rounded-full border bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
+                <span>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</span>
+                <span className="flex items-center gap-1">
+                  <button type="button" onClick={() => editarUbicacionPersonalizada(ubicacion)} className="text-slate-500 hover:text-slate-700" aria-label={`Editar ${ubicacion.nombre}`}>
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button type="button" onClick={() => eliminarUbicacionPersonalizada(ubicacion.id)} className="text-red-500 hover:text-red-700" aria-label={`Eliminar ${ubicacion.nombre}`}>
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Lista */}
@@ -415,6 +569,7 @@ export function ConfiguracionesClient({
               c.precio_camion_actualizado_at,
               ...c.tarifas_bulto.map((tarifa) => tarifa.updated_at),
               ...(c.tarifas_pallet ?? []).map((tarifa) => tarifa.updated_at),
+              ...(c.tarifas_kg ?? []).map((tarifa) => tarifa.updated_at),
             ]);
             const estado = estadoActualizacion(ultimaActualizacion);
             return (
@@ -423,11 +578,11 @@ export function ConfiguracionesClient({
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <span className="font-semibold text-slate-800 text-sm">
-                        {c.origen_provincia}{c.origen_localidad ? ` · ${c.origen_localidad}` : ''}
+                        {formatearRutaConNombre({ provincia: c.origen_provincia, localidad: c.origen_localidad ?? null }, c.origen_provincia, c.origen_localidad ?? null)}
                       </span>
                       <span className="text-muted-foreground">→</span>
                       <span className="font-semibold text-slate-800 text-sm">
-                        {c.destino_provincia}{c.destino_localidad ? ` · ${c.destino_localidad}` : ''}
+                        {formatearRutaConNombre({ provincia: c.destino_provincia, localidad: c.destino_localidad ?? null }, c.destino_provincia, c.destino_localidad ?? null)}
                       </span>
                       <Badge variant={c.activo ? 'default' : 'secondary'} className="text-xs">
                         {c.activo ? 'Activa' : 'Inactiva'}
@@ -509,6 +664,22 @@ export function ConfiguracionesClient({
                         ))}
                       </div>
                     )}
+                    {(c.tarifas_kg ?? []).length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Tramos kg</p>
+                        {[...(c.tarifas_kg ?? [])].sort((a, b) => a.desde_kg - b.desde_kg).map((t, i, arr) => (
+                          <div key={t.id} className="flex gap-2 text-sm">
+                            <span className="text-muted-foreground w-44">
+                              {i === arr.length - 1
+                                ? `Desde ${t.desde_kg} kg en adelante`
+                                : `${t.desde_kg}–${arr[i + 1].desde_kg} kg`}
+                            </span>
+                            <span className="font-semibold">{formatearPrecio(t.precio)}</span>
+                            <span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(t.updated_at ?? c.updated_at)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {c.precio_camion_completo !== null && (
                       <div className="flex gap-2 text-sm"><span className="text-muted-foreground w-44">Camión completo</span><span className="font-semibold">{formatearPrecio(c.precio_camion_completo)}</span><span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(c.precio_camion_actualizado_at ?? c.updated_at)}</span></div>
                     )}
@@ -531,8 +702,44 @@ export function ConfiguracionesClient({
           <div className="space-y-6 py-2">
             {/* Origen / Destino */}
             <div className="grid sm:grid-cols-2 gap-4">
-              <GeorefCombobox label="Origen" value={form.origen} onChange={(v) => setForm((f) => ({ ...f, origen: v }))} localidadOpcional />
-              <GeorefCombobox label="Destino" value={form.destino} onChange={(v) => setForm((f) => ({ ...f, destino: v }))} localidadOpcional />
+              <div className="space-y-2">
+                <GeorefCombobox label="Origen" value={form.origen} onChange={(v) => setForm((f) => ({ ...f, origen: v }))} localidadOpcional />
+                {ubicacionesPersonalizadas.length > 0 && (
+                  <Select value="" onValueChange={(value) => {
+                    const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
+                    if (!ubicacion) return;
+                    setForm((f) => ({ ...f, origen: { provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' } }));
+                  }}>
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue placeholder="Usar ubicación personalizada como origen" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ubicacionesPersonalizadas.map((ubicacion) => (
+                        <SelectItem key={ubicacion.id} value={ubicacion.id}>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-2">
+                <GeorefCombobox label="Destino" value={form.destino} onChange={(v) => setForm((f) => ({ ...f, destino: v }))} localidadOpcional />
+                {ubicacionesPersonalizadas.length > 0 && (
+                  <Select value="" onValueChange={(value) => {
+                    const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
+                    if (!ubicacion) return;
+                    setForm((f) => ({ ...f, destino: { provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' } }));
+                  }}>
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue placeholder="Usar ubicación personalizada como destino" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ubicacionesPersonalizadas.map((ubicacion) => (
+                        <SelectItem key={ubicacion.id} value={ubicacion.id}>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             </div>
 
             <Separator />
@@ -631,6 +838,20 @@ export function ConfiguracionesClient({
               onUpdate={(i, k, v) => updTramo('tramosPallet', i, k, v)}
               onDelete={(i) => delTramo('tramosPallet', i)}
               hint="Soporta medios pallets (0.5). Ej: desde 1 → $90.000, desde 2 → $70.000."
+            />
+
+            <Separator />
+
+            <TramoSection
+              label="Precio por kg (tramos)"
+              icon={<Weight className="h-3.5 w-3.5 text-muted-foreground" />}
+              tramos={form.tramosKg}
+              unidad="kg"
+              paso={1}
+              onAdd={() => addTramo('tramosKg')}
+              onUpdate={(i, k, v) => updTramo('tramosKg', i, k, v)}
+              onDelete={(i) => delTramo('tramosKg', i)}
+              hint="Cada tramo representa el precio total para ese rango de kg. Ej: desde 5 kg → $10.000, desde 10 kg → $19.000."
             />
 
             <Separator />

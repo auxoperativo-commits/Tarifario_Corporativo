@@ -3,7 +3,7 @@
 export type Rol = 'operario' | 'admin';
 
 // El historial guarda un string simple; la UI permite combinar tipos
-export type TipoEnvio = 'bultos' | 'pallet' | 'camion_completo' | 'mixto';
+export type TipoEnvio = 'bultos' | 'kg' | 'pallet' | 'camion_completo' | 'mixto';
 
 export interface Transporte {
   id: string;
@@ -61,6 +61,14 @@ export interface TarifaPallet {
   updated_at?: string;
 }
 
+export interface TarifaKg {
+  id: string;
+  configuracion_id: string;
+  desde_kg: number;
+  precio: number;
+  updated_at?: string;
+}
+
 export interface ConfiguracionTag {
   configuracion_id: string;
   tag_id: string;
@@ -91,6 +99,42 @@ export interface HistorialCalculo {
   created_at: string;
 }
 
+export interface UbicacionPersonalizada {
+  id: string;
+  usuario_id: string;
+  nombre: string;
+  provincia: string;
+  localidad: string | null;
+  created_at: string;
+}
+
+export interface Contenedor {
+  id: string;
+  usuario_id: string;
+  nombre: string;
+  descripcion: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContenedorCotizacion {
+  id: string;
+  contenedor_id: string;
+  configuracion_id: string | null;
+  transporte_id: string | null;
+  transporte_nombre: string | null;
+  origen_provincia: string | null;
+  origen_localidad: string | null;
+  destino_provincia: string | null;
+  destino_localidad: string | null;
+  precio_total: number | null;
+  cantidad_bultos: number | null;
+  cantidad_pallets: number | null;
+  cantidad_kg: number | null;
+  descripcion: string | null;
+  created_at: string;
+}
+
 // ── Tipos extendidos con relaciones ────────────────────────────────────────────
 
 export interface ConfiguracionEnvioConRelaciones extends ConfiguracionEnvio {
@@ -107,6 +151,8 @@ export interface UbicacionSeleccionada {
   localidad: string | null;
   provinciaId?: string;
   localidadId?: string;
+  nombre?: string;
+  tipo?: 'georef' | 'personalizada';
 }
 
 // ── Resultados de búsqueda ─────────────────────────────────────────────────────
@@ -117,6 +163,7 @@ export interface BusquedaEnvio {
   destino: UbicacionSeleccionada;
   cantidadBultos: number;   // 0 = no aplica
   cantidadPallets: number;  // 0 = no aplica
+  cantidadKg: number;        // 0 = no aplica
   camionCompleto: boolean;
   soloPeritoneal: boolean;  // si true: solo mostrar configuraciones apto_peritoneal = true
 }
@@ -130,6 +177,12 @@ export interface ResultadoEnvio {
   tiempoMax: number | null;
   score: number;
   desglose: DesglosePrecio;
+  origenSeleccionado?: UbicacionSeleccionada;
+  destinoSeleccionado?: UbicacionSeleccionada;
+  cantidadBultos?: number;
+  cantidadPallets?: number;
+  cantidadKg?: number;
+  camionCompleto?: boolean;
 }
 
 export interface DesglosePrecio {

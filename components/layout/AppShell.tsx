@@ -19,6 +19,7 @@ import {
   ChevronRight,
   BarChart3,
   Users,
+  BriefcaseBusiness,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -49,6 +50,12 @@ const NAV_ITEMS = [
     href: '/tags',
     label: 'Tags',
     icon: Tags,
+    roles: ['operario', 'admin'] as Rol[],
+  },
+  {
+    href: '/contenedor',
+    label: 'Contenedor',
+    icon: BriefcaseBusiness,
     roles: ['operario', 'admin'] as Rol[],
   },
   {
