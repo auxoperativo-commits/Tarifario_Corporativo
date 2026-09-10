@@ -11,6 +11,17 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { BriefcaseBusiness, Plus, Trash2, Loader2, Package, Truck, MapPinned } from 'lucide-react';
 
+function formatearRutaContenedor(
+  provincia: string | null,
+  localidad: string | null,
+  nombrePersonalizado?: string | null
+): string {
+  if (!provincia) return 'Sin ubicación';
+  if (nombrePersonalizado) return `${provincia} (${nombrePersonalizado})${localidad ? ` · ${localidad}` : ''}`;
+  if (localidad) return `${provincia} · ${localidad}`;
+  return provincia;
+}
+
 interface Props {
   contenedoresIniciales: Contenedor[];
   cotizacionesIniciales: ContenedorCotizacion[];
@@ -167,7 +178,7 @@ export function ContenedorClient({ contenedoresIniciales, cotizacionesIniciales 
                   <div className="space-y-1 text-xs text-muted-foreground">
                     {cotizaciones.filter((item) => item.contenedor_id === contenedor.id).map((item) => (
                       <div key={item.id} className="flex items-center justify-between gap-3 rounded bg-white px-2 py-1">
-                        <span className="truncate">{item.transporte_nombre ?? 'Transporte'} · {item.destino_provincia}{item.destino_localidad ? ` · ${item.destino_localidad}` : ''}</span>
+                        <span className="truncate">{item.transporte_nombre ?? 'Transporte'} · {formatearRutaContenedor(item.destino_provincia, item.destino_localidad, item.destino_nombre_personalizado)}</span>
                         <span className="font-medium text-slate-700">${Number(item.precio_total || 0).toLocaleString('es-AR')}</span>
                       </div>
                     ))}
@@ -212,8 +223,8 @@ export function ContenedorClient({ contenedoresIniciales, cotizacionesIniciales 
                     </div>
 
                     <div className="grid gap-2 sm:grid-cols-2 text-sm text-slate-600">
-                      <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{item.origen_provincia}{item.origen_localidad ? ` · ${item.origen_localidad}` : ''}</div>
-                      <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{item.destino_provincia}{item.destino_localidad ? ` · ${item.destino_localidad}` : ''}</div>
+                      <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{formatearRutaContenedor(item.origen_provincia, item.origen_localidad, item.origen_nombre_personalizado)}</div>
+                      <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{formatearRutaContenedor(item.destino_provincia, item.destino_localidad, item.destino_nombre_personalizado)}</div>
                       <div className="flex items-center gap-2"><Package className="h-3.5 w-3.5 text-muted-foreground" />{item.cantidad_bultos || 0} bultos · {item.cantidad_pallets || 0} pallets</div>
                       <div className="flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-muted-foreground" />{item.cantidad_kg || 0} kg</div>
                     </div>

@@ -70,19 +70,35 @@ export function filtrarConfiguraciones(
   const { origen, destino, cantidadBultos, cantidadPallets, cantidadKg, camionCompleto } = busqueda;
   const activas = configuraciones.filter((c) => c.activo);
 
-  // Matchear ruta
+  const coincideUbicacionPersonalizada = (
+    seleccion: UbicacionSeleccionada | null,
+    configNombre?: string | null,
+    configId?: string | null,
+    tipo: 'origen' | 'destino' = 'origen'
+  ) => {
+    if (!seleccion || seleccion.tipo !== 'personalizada') return true;
+    if (!configNombre && !configId) return false;
+
+    const mismoNombre = !!seleccion.nombre && !!configNombre &&
+      normalizarUbicacion(seleccion.nombre) === normalizarUbicacion(configNombre);
+    const mismoId = !!seleccion.id && !!configId && seleccion.id === configId;
+    return mismoNombre || mismoId;
+  };
+
   const matcheadoras = activas.filter((c) => {
     const matchOrigen =
       normalizarUbicacion(c.origen_provincia) === normalizarUbicacion(origen.provincia) &&
       (origen.localidad === null ||
         c.origen_localidad === null ||
-        normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad));
+        normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad)) &&
+      coincideUbicacionPersonalizada(origen, c.origen_nombre_personalizado, c.origen_ubicacion_personalizada_id, 'origen');
 
     const matchDestino =
       normalizarUbicacion(c.destino_provincia) === normalizarUbicacion(destino.provincia) &&
       (destino.localidad === null ||
         c.destino_localidad === null ||
-        normalizarUbicacion(c.destino_localidad) === normalizarUbicacion(destino.localidad));
+        normalizarUbicacion(c.destino_localidad) === normalizarUbicacion(destino.localidad)) &&
+      coincideUbicacionPersonalizada(destino, c.destino_nombre_personalizado, c.destino_ubicacion_personalizada_id, 'destino');
 
     return matchOrigen && matchDestino;
   });

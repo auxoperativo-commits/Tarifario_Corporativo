@@ -29,8 +29,12 @@ export interface ConfiguracionEnvio {
   transporte_id: string;
   origen_provincia: string;
   origen_localidad: string | null;
+  origen_nombre_personalizado?: string | null;
+  origen_ubicacion_personalizada_id?: string | null;
   destino_provincia: string;
   destino_localidad: string | null;
+  destino_nombre_personalizado?: string | null;
+  destino_ubicacion_personalizada_id?: string | null;
   tiempo_estimado_min_horas: number | null;
   tiempo_estimado_max_horas: number | null;
   precio_pallet: number | null;
@@ -125,8 +129,10 @@ export interface ContenedorCotizacion {
   transporte_nombre: string | null;
   origen_provincia: string | null;
   origen_localidad: string | null;
+  origen_nombre_personalizado?: string | null;
   destino_provincia: string | null;
   destino_localidad: string | null;
+  destino_nombre_personalizado?: string | null;
   precio_total: number | null;
   cantidad_bultos: number | null;
   cantidad_pallets: number | null;
@@ -151,6 +157,7 @@ export interface UbicacionSeleccionada {
   localidad: string | null;
   provinciaId?: string;
   localidadId?: string;
+  id?: string;
   nombre?: string;
   tipo?: 'georef' | 'personalizada';
 }

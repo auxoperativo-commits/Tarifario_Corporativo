@@ -9,7 +9,7 @@ export default async function TransportePerfilPage({ params }: { params: { id: s
   const supabase = await createClient();
   const [{ data: transporte }, { data: configuraciones }] = await Promise.all([
     supabase.from('transportes').select('*').eq('id', params.id).single(),
-    supabase.from('configuraciones_envio').select('id, origen_provincia, origen_localidad, destino_provincia, destino_localidad, activo').eq('transporte_id', params.id).order('destino_provincia'),
+    supabase.from('configuraciones_envio').select('id, origen_provincia, origen_localidad, origen_nombre_personalizado, destino_provincia, destino_localidad, destino_nombre_personalizado, activo').eq('transporte_id', params.id).order('destino_provincia'),
   ]);
 
   if (!transporte) notFound();

@@ -30,8 +30,10 @@ create table if not exists contenedor_cotizaciones (
   transporte_nombre text,
   origen_provincia text,
   origen_localidad text,
+  origen_nombre_personalizado text,
   destino_provincia text,
   destino_localidad text,
+  destino_nombre_personalizado text,
   precio_total numeric(12,2),
   cantidad_bultos integer not null default 0,
   cantidad_pallets numeric(12,2) not null default 0,
@@ -89,3 +91,10 @@ $$ language plpgsql;
 create trigger trg_contenedores_updated_at
   before update on contenedores
   for each row execute function set_updated_at();
+
+alter table configuraciones_envio add column if not exists origen_nombre_personalizado text;
+alter table configuraciones_envio add column if not exists origen_ubicacion_personalizada_id uuid references ubicaciones_personalizadas(id) on delete set null;
+alter table configuraciones_envio add column if not exists destino_nombre_personalizado text;
+alter table configuraciones_envio add column if not exists destino_ubicacion_personalizada_id uuid references ubicaciones_personalizadas(id) on delete set null;
+alter table contenedor_cotizaciones add column if not exists origen_nombre_personalizado text;
+alter table contenedor_cotizaciones add column if not exists destino_nombre_personalizado text;

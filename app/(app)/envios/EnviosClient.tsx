@@ -312,7 +312,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
                 <Select value="" onValueChange={(value) => {
                   const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
                   if (!ubicacion) return;
-                  setOrigen({ provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' });
+                  setOrigen({ provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, id: ubicacion.id, nombre: ubicacion.nombre, tipo: 'personalizada' });
                 }}>
                   <SelectTrigger className="w-full h-9">
                     <SelectValue placeholder="Seleccionar ubicación personalizada" />
@@ -337,7 +337,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
                 <Select value="" onValueChange={(value) => {
                   const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
                   if (!ubicacion) return;
-                  setDestino({ provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' });
+                  setDestino({ provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, id: ubicacion.id, nombre: ubicacion.nombre, tipo: 'personalizada' });
                 }}>
                   <SelectTrigger className="w-full h-9">
                     <SelectValue placeholder="Seleccionar ubicación personalizada" />
@@ -684,8 +684,14 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
         transporte_nombre: transporte.nombre_fantasia || transporte.razon_social,
         origen_provincia: resultado.origenSeleccionado?.provincia ?? resultado.configuracion.origen_provincia,
         origen_localidad: resultado.origenSeleccionado?.localidad ?? resultado.configuracion.origen_localidad,
+        origen_nombre_personalizado: resultado.origenSeleccionado?.tipo === 'personalizada'
+          ? (resultado.origenSeleccionado.nombre ?? resultado.configuracion.origen_nombre_personalizado ?? null)
+          : (resultado.configuracion.origen_nombre_personalizado ?? null),
         destino_provincia: resultado.destinoSeleccionado?.provincia ?? resultado.configuracion.destino_provincia,
         destino_localidad: resultado.destinoSeleccionado?.localidad ?? resultado.configuracion.destino_localidad,
+        destino_nombre_personalizado: resultado.destinoSeleccionado?.tipo === 'personalizada'
+          ? (resultado.destinoSeleccionado.nombre ?? resultado.configuracion.destino_nombre_personalizado ?? null)
+          : (resultado.configuracion.destino_nombre_personalizado ?? null),
         precio_total: precioTotal,
         cantidad_bultos: resultado.cantidadBultos ?? 0,
         cantidad_pallets: resultado.cantidadPallets ?? 0,

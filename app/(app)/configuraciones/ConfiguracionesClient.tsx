@@ -89,11 +89,12 @@ function formatearFechaActualizacion(fecha: string | null): string {
 function formatearRutaConNombre(
   ubicacion: Partial<UbicacionSeleccionada> | null | undefined,
   fallbackProvincia?: string | null,
-  fallbackLocalidad?: string | null
+  fallbackLocalidad?: string | null,
+  customNombre?: string | null
 ): string {
   const provincia = ubicacion?.provincia ?? fallbackProvincia ?? '';
   const localidad = ubicacion?.localidad ?? fallbackLocalidad ?? '';
-  const nombre = ubicacion?.nombre;
+  const nombre = ubicacion?.nombre ?? customNombre ?? null;
 
   if (!provincia) return 'Sin ubicación';
   if (nombre) return `${provincia} (${nombre})${localidad ? ` · ${localidad}` : ''}`;
@@ -223,8 +224,20 @@ export function ConfiguracionesClient({
         : [{ desde: 1, precio: '' }];
 
     setForm({
-      origen: { provincia: c.origen_provincia, localidad: c.origen_localidad ?? null },
-      destino: { provincia: c.destino_provincia, localidad: c.destino_localidad ?? null },
+      origen: {
+        provincia: c.origen_provincia,
+        localidad: c.origen_localidad ?? null,
+        id: c.origen_ubicacion_personalizada_id ?? undefined,
+        nombre: c.origen_nombre_personalizado ?? undefined,
+        tipo: c.origen_ubicacion_personalizada_id ? 'personalizada' : 'georef',
+      },
+      destino: {
+        provincia: c.destino_provincia,
+        localidad: c.destino_localidad ?? null,
+        id: c.destino_ubicacion_personalizada_id ?? undefined,
+        nombre: c.destino_nombre_personalizado ?? undefined,
+        tipo: c.destino_ubicacion_personalizada_id ? 'personalizada' : 'georef',
+      },
       tiempo_min: c.tiempo_estimado_min_horas ?? '',
       tiempo_max: c.tiempo_estimado_max_horas ?? '',
       precio_camion: c.precio_camion_completo ?? '',
@@ -302,8 +315,12 @@ export function ConfiguracionesClient({
         transporte_id: transporteId,
         origen_provincia: form.origen!.provincia,
         origen_localidad: form.origen!.localidad ?? null,
+        origen_nombre_personalizado: form.origen?.tipo === 'personalizada' ? form.origen.nombre ?? form.origen.provincia : null,
+        origen_ubicacion_personalizada_id: form.origen?.tipo === 'personalizada' ? form.origen.id ?? null : null,
         destino_provincia: form.destino!.provincia,
         destino_localidad: form.destino!.localidad ?? null,
+        destino_nombre_personalizado: form.destino?.tipo === 'personalizada' ? form.destino.nombre ?? form.destino.provincia : null,
+        destino_ubicacion_personalizada_id: form.destino?.tipo === 'personalizada' ? form.destino.id ?? null : null,
         tiempo_estimado_min_horas: form.tiempo_min !== '' ? Number(form.tiempo_min) : null,
         tiempo_estimado_max_horas: form.tiempo_max !== '' ? Number(form.tiempo_max) : null,
         precio_pallet: null,
@@ -578,11 +595,21 @@ export function ConfiguracionesClient({
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <span className="font-semibold text-slate-800 text-sm">
-                        {formatearRutaConNombre({ provincia: c.origen_provincia, localidad: c.origen_localidad ?? null }, c.origen_provincia, c.origen_localidad ?? null)}
+                        {formatearRutaConNombre(
+                          { provincia: c.origen_provincia, localidad: c.origen_localidad ?? null, nombre: c.origen_nombre_personalizado ?? undefined },
+                          c.origen_provincia,
+                          c.origen_localidad ?? null,
+                          c.origen_nombre_personalizado
+                        )}
                       </span>
                       <span className="text-muted-foreground">→</span>
                       <span className="font-semibold text-slate-800 text-sm">
-                        {formatearRutaConNombre({ provincia: c.destino_provincia, localidad: c.destino_localidad ?? null }, c.destino_provincia, c.destino_localidad ?? null)}
+                        {formatearRutaConNombre(
+                          { provincia: c.destino_provincia, localidad: c.destino_localidad ?? null, nombre: c.destino_nombre_personalizado ?? undefined },
+                          c.destino_provincia,
+                          c.destino_localidad ?? null,
+                          c.destino_nombre_personalizado
+                        )}
                       </span>
                       <Badge variant={c.activo ? 'default' : 'secondary'} className="text-xs">
                         {c.activo ? 'Activa' : 'Inactiva'}

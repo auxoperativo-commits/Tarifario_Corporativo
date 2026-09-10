@@ -2,6 +2,32 @@
 
 import { useMemo, useState } from 'react';
 import { BarChart3, PieChart, SlidersHorizontal } from 'lucide-react';
+
+const PROVINCIAS_ARGENTINA = [
+  { nombre: 'Buenos Aires', x: 60, y: 76 },
+  { nombre: 'Córdoba', x: 66, y: 56 },
+  { nombre: 'Santa Fe', x: 78, y: 62 },
+  { nombre: 'La Pampa', x: 52, y: 63 },
+  { nombre: 'Mendoza', x: 39, y: 58 },
+  { nombre: 'San Juan', x: 33, y: 49 },
+  { nombre: 'Neuquén', x: 28, y: 45 },
+  { nombre: 'Río Negro', x: 24, y: 53 },
+  { nombre: 'Chubut', x: 17, y: 32 },
+  { nombre: 'Santa Cruz', x: 12, y: 20 },
+  { nombre: 'Tierra del Fuego', x: 10, y: 9 },
+  { nombre: 'Catamarca', x: 47, y: 47 },
+  { nombre: 'La Rioja', x: 48, y: 52 },
+  { nombre: 'San Luis', x: 43, y: 62 },
+  { nombre: 'Santiago del Estero', x: 60, y: 44 },
+  { nombre: 'Salta', x: 66, y: 38 },
+  { nombre: 'Jujuy', x: 71, y: 30 },
+  { nombre: 'Tucumán', x: 58, y: 41 },
+  { nombre: 'Formosa', x: 84, y: 49 },
+  { nombre: 'Chaco', x: 76, y: 49 },
+  { nombre: 'Corrientes', x: 84, y: 60 },
+  { nombre: 'Misiones', x: 90, y: 69 },
+  { nombre: 'Entre Ríos', x: 82, y: 60 },
+];
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 
@@ -93,6 +119,24 @@ export function ReportesClient({ configuraciones }: { configuraciones: ReporteCo
   const colores = ['#2563eb', '#0f766e', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2'];
   const segmentos = destinos.reduce<{ inicio: number; gradientes: string[] }>((acc, [, cantidad], index) => { const fin = acc.inicio + cantidad / Math.max(totalDestinos, 1) * 100; acc.gradientes.push(`${colores[index % colores.length]} ${acc.inicio}% ${fin}%`); acc.inicio = fin; return acc; }, { inicio: 0, gradientes: [] });
 
+  const mapaProvincias = useMemo(() => {
+    const conteoPorProvincia = new Map<string, number>();
+    configsFiltradas.forEach((config) => {
+      const nombre = config.destino_provincia;
+      if (!nombre) return;
+      const clave = normalizarUbicacion(nombre);
+      const actual = Array.from(conteoPorProvincia.keys()).find((actualKey) => normalizarUbicacion(actualKey) === clave);
+      const key = actual ?? nombre;
+      conteoPorProvincia.set(key, (conteoPorProvincia.get(key) ?? 0) + 1);
+    });
+
+    return PROVINCIAS_ARGENTINA.map((provincia) => {
+      const matchKey = Array.from(conteoPorProvincia.keys()).find((key) => normalizarUbicacion(key) === normalizarUbicacion(provincia.nombre));
+      const cantidad = matchKey ? conteoPorProvincia.get(matchKey) ?? 0 : 0;
+      return { ...provincia, cantidad };
+    });
+  }, [configsFiltradas]);
+
   function limpiar() { setOrigenProvincia(''); setOrigenLocalidad(''); setDestinoProvincia(''); setDestinoLocalidad(''); }
 
   return <div className="space-y-5">
@@ -100,6 +144,75 @@ export function ReportesClient({ configuraciones }: { configuraciones: ReporteCo
     <section><h2 className="mb-3 flex items-center gap-2 text-lg font-semibold"><BarChart3 className="h-5 w-5 text-primary" />Precios por bulto</h2><Resumen datos={barrasBultos} etiqueta="por bulto" /><Card><CardContent className="p-5"><Barras datos={barrasBultos} /></CardContent></Card></section>
     <section><h2 className="mb-3 flex items-center gap-2 text-lg font-semibold"><BarChart3 className="h-5 w-5 text-primary" />Precios por pallet</h2><Resumen datos={barrasPallets} etiqueta="por pallet" /><Card><CardContent className="p-5"><Barras datos={barrasPallets} /></CardContent></Card></section>
     <section><h2 className="mb-3 flex items-center gap-2 text-lg font-semibold"><BarChart3 className="h-5 w-5 text-primary" />Precios por camión completo</h2><Resumen datos={barrasCamion} etiqueta="por camión" /><Card><CardContent className="p-5"><Barras datos={barrasCamion} /></CardContent></Card></section>
-    <section><h2 className="mb-3 flex items-center gap-2 text-lg font-semibold"><PieChart className="h-5 w-5 text-primary" />Destinos con más configuraciones</h2><Card><CardContent className="flex flex-col items-center gap-5 p-5 sm:flex-row sm:items-center">{destinos.length ? <div className="h-44 w-44 shrink-0 rounded-full" style={{ background: `conic-gradient(${segmentos.gradientes.join(', ')})` }} aria-label="Distribución de configuraciones por destino" /> : <p className="text-sm text-muted-foreground">No hay destinos para estos filtros.</p>}<div className="grid gap-2 text-sm">{destinos.map(([nombre, cantidad], index) => <div key={nombre} className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm" style={{ backgroundColor: colores[index % colores.length] }} />{nombre}<span className="text-muted-foreground">{cantidad} configuración{cantidad !== 1 ? 'es' : ''}</span></div>)}</div></CardContent></Card></section>
+    <section>
+      <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold"><PieChart className="h-5 w-5 text-primary" />Destinos con más configuraciones</h2>
+      <Card>
+        <CardContent className="p-5">
+          <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr] xl:items-center">
+            <div className="relative overflow-hidden rounded-xl border bg-slate-50 p-3">
+              <svg viewBox="0 0 100 100" className="h-[340px] w-full" role="img" aria-label="Mapa mínimo de Argentina con concentración por provincia">
+                <rect x="0" y="0" width="100" height="100" fill="#f8fafc" />
+                <path d="M14 63 L18 54 L22 48 L27 42 L30 33 L36 27 L42 21 L50 15 L58 13 L66 14 L73 18 L80 23 L86 30 L91 39 L94 48 L90 58 L85 65 L81 72 L74 79 L66 86 L58 89 L50 86 L42 81 L35 77 L28 72 L22 69 L18 67 Z" fill="#dfe7e7" stroke="#a8b4b4" strokeWidth="0.7" />
+                <path d="M34 58 L42 56 L47 60 L46 67 L39 69 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="0.5" />
+                <path d="M47 46 L56 42 L62 46 L62 52 L54 54 L48 52 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="0.5" />
+                <path d="M62 28 L71 29 L77 34 L75 39 L67 39 L62 34 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="0.5" />
+                {mapaProvincias.map((provincia) => {
+                  if (!provincia.cantidad) return null;
+                  const intensidad = Math.min(1, provincia.cantidad / Math.max(4, ...mapaProvincias.map((item) => item.cantidad), 1));
+                  const radio = 1.9 + intensidad * 2.5;
+                  return (
+                    <g key={provincia.nombre}>
+                      <circle cx={provincia.x} cy={provincia.y} r={radio} fill={`rgba(15, 118, 110, ${0.25 + intensidad * 0.65})`} stroke="#0f766e" strokeWidth="0.35" />
+                      <text x={provincia.x + 2.3} y={provincia.y - 2.2} fontSize="2.8" fill="#0f172a" fontWeight="700">{provincia.cantidad}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            <div className="space-y-3">
+              {destinos.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {destinos.map(([nombre, cantidad], index) => (
+                    <div key={nombre} className="flex items-center gap-2 rounded-full border bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colores[index % colores.length] }} />
+                      <span>{nombre}</span>
+                      <span className="font-semibold text-slate-900">{cantidad}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No hay destinos para estos filtros.</p>
+              )}
+
+              <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                {destinos.length ? (
+                  <div className="flex h-full w-full">
+                    {destinos.map(([nombre, cantidad], index) => {
+                      const porcentaje = (cantidad / Math.max(totalDestinos, 1)) * 100;
+                      return (
+                        <div key={nombre} className="h-full" style={{ width: `${porcentaje}%`, backgroundColor: colores[index % colores.length] }} />
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="grid gap-2 text-sm">
+                {destinos.map(([nombre, cantidad], index) => (
+                  <div key={nombre} className="flex items-center justify-between gap-3 rounded border bg-white px-2 py-1.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colores[index % colores.length] }} />
+                      <span className="truncate">{nombre}</span>
+                    </div>
+                    <span className="text-muted-foreground">{cantidad} config.</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
   </div>;
 }

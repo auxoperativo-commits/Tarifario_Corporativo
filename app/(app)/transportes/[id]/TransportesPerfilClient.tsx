@@ -11,9 +11,17 @@ interface ConfiguracionResumen {
   id: string;
   origen_provincia: string;
   origen_localidad: string | null;
+  origen_nombre_personalizado?: string | null;
   destino_provincia: string;
   destino_localidad: string | null;
+  destino_nombre_personalizado?: string | null;
   activo: boolean;
+}
+
+function formatearRutaResumen(config: ConfiguracionResumen): string {
+  const origen = config.origen_nombre_personalizado ? `${config.origen_provincia} (${config.origen_nombre_personalizado})${config.origen_localidad ? ` · ${config.origen_localidad}` : ''}` : (config.origen_localidad ? `${config.origen_provincia} · ${config.origen_localidad}` : config.origen_provincia);
+  const destino = config.destino_nombre_personalizado ? `${config.destino_provincia} (${config.destino_nombre_personalizado})${config.destino_localidad ? ` · ${config.destino_localidad}` : ''}` : (config.destino_localidad ? `${config.destino_provincia} · ${config.destino_localidad}` : config.destino_provincia);
+  return `${origen} → ${destino}`;
 }
 
 export function TransportesPerfilClient({ transporte, configuraciones }: { transporte: Transporte; configuraciones: ConfiguracionResumen[] }) {
@@ -56,7 +64,7 @@ export function TransportesPerfilClient({ transporte, configuraciones }: { trans
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Rutas configuradas ({configuraciones.length})</h2>
-        {configuraciones.length === 0 ? <p className="text-sm text-muted-foreground">Este transporte todavía no tiene rutas configuradas.</p> : <div className="grid gap-2">{configuraciones.map((config) => <Link key={config.id} href={`/configuraciones?transporte=${transporte.id}`} className="flex items-center justify-between rounded-lg border bg-white p-3 hover:border-primary"><span className="flex items-center gap-2 text-sm"><MapPin className="h-4 w-4 text-muted-foreground" />{config.origen_localidad || config.origen_provincia} → {config.destino_localidad || config.destino_provincia}</span><Badge variant={config.activo ? 'default' : 'secondary'}>{config.activo ? 'Activa' : 'Inactiva'}</Badge></Link>)}</div>}
+        {configuraciones.length === 0 ? <p className="text-sm text-muted-foreground">Este transporte todavía no tiene rutas configuradas.</p> : <div className="grid gap-2">{configuraciones.map((config) => <Link key={config.id} href={`/configuraciones?transporte=${transporte.id}`} className="flex items-center justify-between rounded-lg border bg-white p-3 hover:border-primary"><span className="flex items-center gap-2 text-sm"><MapPin className="h-4 w-4 text-muted-foreground" />{formatearRutaResumen(config)}</span><Badge variant={config.activo ? 'default' : 'secondary'}>{config.activo ? 'Activa' : 'Inactiva'}</Badge></Link>)}</div>}
       </section>
     </div>
   );

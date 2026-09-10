@@ -43,8 +43,12 @@ create table configuraciones_envio (
 
   origen_provincia text not null,
   origen_localidad text,      -- null = aplica a toda la provincia
+  origen_nombre_personalizado text,
+  origen_ubicacion_personalizada_id uuid references ubicaciones_personalizadas(id) on delete set null,
   destino_provincia text not null,
   destino_localidad text,     -- null = aplica a toda la provincia
+  destino_nombre_personalizado text,
+  destino_ubicacion_personalizada_id uuid references ubicaciones_personalizadas(id) on delete set null,
 
   -- tiempos estimados de entrega (permite un rango, ej 12hs a 24hs)
   tiempo_estimado_min_horas numeric(6,1),
