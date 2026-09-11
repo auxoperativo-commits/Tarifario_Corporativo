@@ -1,19 +1,17 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PerfilClient } from '../perfil/PerfilClient';
 import { UsuariosClient } from './UsuariosClient';
 import type { PerfilUsuario } from '@/lib/types/database';
+import { getCurrentUserProfile } from '@/lib/auth/current-user';
 
 export const metadata = { title: 'Usuarios — Tarifario' };
 
 export default async function UsuariosPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { user, perfil } = await getCurrentUserProfile();
   if (!user) redirect('/login');
 
-  const { data: perfil } = await supabase.from('perfiles_usuario').select('*').eq('id', user.id).single();
   const perfilData = perfil as PerfilUsuario | null;
 
   if (perfilData?.rol !== 'admin') {

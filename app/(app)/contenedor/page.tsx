@@ -1,12 +1,13 @@
 import { createClient } from '@/lib/supabase/server';
 import { ContenedorClient } from './ContenedorClient';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { getCurrentUserProfile } from '@/lib/auth/current-user';
 
 export const metadata = { title: 'Contenedor — Tarifario' };
 
 export default async function ContenedorPage() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { user } = await getCurrentUserProfile();
 
   if (!user) {
     return null;
@@ -18,12 +19,13 @@ export default async function ContenedorPage() {
     .eq('usuario_id', user.id)
     .order('created_at', { ascending: false });
 
-  const { data: cotizaciones } = await supabase
-    .from('contenedor_cotizaciones')
-    .select('*');
-
-  const contenedorIds = new Set((contenedores ?? []).map((item) => item.id));
-  const cotizacionesDelUsuario = (cotizaciones ?? []).filter((cotizacion) => contenedorIds.has(cotizacion.contenedor_id));
+  const contenedorIds = (contenedores ?? []).map((item) => item.id);
+  const { data: cotizaciones } = contenedorIds.length
+    ? await supabase
+        .from('contenedor_cotizaciones')
+        .select('*')
+        .in('contenedor_id', contenedorIds)
+    : { data: [] };
 
   return (
     <div>
@@ -31,7 +33,7 @@ export default async function ContenedorPage() {
         title="Contenedor"
         description="Guardá cotizaciones por usuario y armá un resumen final por envío"
       />
-      <ContenedorClient contenedoresIniciales={contenedores ?? []} cotizacionesIniciales={cotizacionesDelUsuario} />
+      <ContenedorClient contenedoresIniciales={contenedores ?? []} cotizacionesIniciales={cotizaciones ?? []} />
     </div>
   );
 }

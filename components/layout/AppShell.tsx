@@ -20,6 +20,7 @@ import {
   BarChart3,
   Users,
   BriefcaseBusiness,
+  History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +63,12 @@ const NAV_ITEMS = [
     href: '/reportes',
     label: 'Reportes',
     icon: BarChart3,
+    roles: ['operario', 'admin'] as Rol[],
+  },
+  {
+    href: '/movimientos',
+    label: 'Movimientos',
+    icon: History,
     roles: ['operario', 'admin'] as Rol[],
   },
   {

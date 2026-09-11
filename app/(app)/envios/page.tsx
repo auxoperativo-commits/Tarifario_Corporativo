@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { EnviosClient } from './EnviosClient';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { getCurrentUserProfile } from '@/lib/auth/current-user';
 
 export const metadata = { title: 'Envíos — Tarifario' };
 
@@ -8,11 +9,7 @@ export default async function EnviosPage() {
   const supabase = await createClient();
 
   // Cargamos todo lo necesario para el cálculo en el servidor
-  const [
-    { data: configuraciones },
-    { data: tags },
-    { data: perfil },
-  ] = await Promise.all([
+  const [{ data: configuraciones }, { data: tags }, { perfil }] = await Promise.all([
     supabase
       .from('configuraciones_envio')
       .select(
@@ -20,12 +17,7 @@ export default async function EnviosPage() {
       )
       .eq('activo', true),
     supabase.from('tags').select('*').order('nombre'),
-    supabase
-      .from('perfiles_usuario')
-      .select(
-        'origen_predeterminado_provincia, origen_predeterminado_localidad, destino_predeterminado_provincia, destino_predeterminado_localidad'
-      )
-      .single(),
+    getCurrentUserProfile(),
   ]);
 
   return (

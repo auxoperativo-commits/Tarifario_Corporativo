@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
 import { EmptyState } from '@/components/layout/EmptyState';
 import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
+import { parsearNumeroLocal } from '@/lib/numeros';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
   Transporte, Tag, ConfiguracionEnvio,
@@ -31,7 +32,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search, Weight,
+  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search, Weight, Copy,
 } from 'lucide-react';
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ import {
 interface TramoForm {
   id?: string;
   desde: number | '';
-  precio: number | '';
+  precio: number | string;
   esValorInicial?: boolean; // solo aplica al tramo con desde = 1
 }
 
@@ -56,7 +57,7 @@ interface FormData {
   destino: UbicacionSeleccionada | null;
   tiempo_min: number | '';
   tiempo_max: number | '';
-  precio_camion: number | '';
+  precio_camion: number | string;
   activo: boolean;
   aptoPeritoneal: boolean;
   tramosBulto: TramoForm[];
@@ -65,10 +66,10 @@ interface FormData {
   tagIds: string[];
   // Precios adicionales por tag: clave = tag_id, valor = precios opcionales por unidad
   tagPrecios: Record<string, {
-    bulto: number | '';
-    pallet: number | '';
-    kg: number | '';
-    camion_completo: number | '';
+    bulto: number | string;
+    pallet: number | string;
+    kg: number | string;
+    camion_completo: number | string;
   }>;
 }
 
@@ -284,7 +285,7 @@ export function ConfiguracionesClient({
   function updTramo(campo: 'tramosBulto' | 'tramosPallet' | 'tramosKg', idx: number, k: 'desde' | 'precio', v: string) {
     setForm((f) => {
       const arr = [...f[campo]];
-      arr[idx] = { ...arr[idx], [k]: v === '' ? '' : Number(v) };
+      arr[idx] = { ...arr[idx], [k]: k === 'precio' ? v : (v === '' ? '' : Number(v)) };
       return { ...f, [campo]: arr };
     });
   }
@@ -342,6 +343,16 @@ export function ConfiguracionesClient({
       const desdes = filled.map((t) => t.desde);
       if (new Set(desdes).size !== desdes.length) return `Hay valores "desde ${label}" repetidos.`;
       if (filled.some((t) => Number(t.desde) <= 0)) return `"Desde ${label}" debe ser mayor a 0.`;
+      if (filled.some((t) => {
+        const precio = parsearNumeroLocal(t.precio);
+        return precio === null || precio < 0;
+      })) return `Ingresá un precio válido para ${label}.`;
+    }
+    if (form.precio_camion !== '' && (parsearNumeroLocal(form.precio_camion) ?? -1) < 0) return 'Ingresá un precio válido para camión completo.';
+    for (const precios of Object.values(form.tagPrecios)) {
+      if (Object.values(precios).some((precio) => precio !== '' && ((parsearNumeroLocal(precio) ?? -1) < 0))) {
+        return 'Ingresá precios válidos para los tags.';
+      }
     }
     return null;
   }
@@ -366,10 +377,12 @@ export function ConfiguracionesClient({
         tiempo_estimado_min_horas: form.tiempo_min !== '' ? Number(form.tiempo_min) : null,
         tiempo_estimado_max_horas: form.tiempo_max !== '' ? Number(form.tiempo_max) : null,
         precio_pallet: null,
-        precio_camion_completo: form.precio_camion !== '' ? Number(form.precio_camion) : null,
+        precio_camion_completo: form.precio_camion !== '' ? parsearNumeroLocal(form.precio_camion) : null,
         precio_camion_actualizado_at: form.precio_camion !== '' ? fechaActualizacion : null,
         apto_peritoneal: form.aptoPeritoneal,
         activo: form.activo,
+        es_copia: false,
+        nombre_copia: null,
       };
 
       let configId: string;
@@ -385,30 +398,34 @@ export function ConfiguracionesClient({
         configId = data.id;
       }
 
-      // tarifas_bulto (con es_valor_inicial)
-      await supabase.from('tarifas_bulto').delete().eq('configuracion_id', configId);
       const bultosFilled = form.tramosBulto.filter((t) => t.desde !== '' && t.precio !== '');
-      if (bultosFilled.length > 0) {
-        const { error } = await supabase.from('tarifas_bulto').insert(
-          bultosFilled.map((t) => ({
-            configuracion_id: configId,
-            desde_bulto: Number(t.desde),
-            precio: Number(t.precio),
-            es_valor_inicial: t.esValorInicial ?? false,
-            updated_at: fechaActualizacion,
-          }))
-        );
+      const bultosConId = bultosFilled.filter((t) => t.id).map((t) => t.id!);
+      const bultosEliminados = editandoId
+        ? (configs.find((c) => c.id === configId)?.tarifas_bulto ?? []).filter((t) => !bultosConId.includes(t.id)).map((t) => t.id)
+        : [];
+      if (bultosEliminados.length) await supabase.from('tarifas_bulto').delete().in('id', bultosEliminados);
+      for (const tramo of bultosFilled) {
+        const datos = { desde_bulto: Number(tramo.desde), precio: parsearNumeroLocal(tramo.precio)!, es_valor_inicial: tramo.esValorInicial ?? false, updated_at: fechaActualizacion };
+        const { error } = tramo.id
+          ? await supabase.from('tarifas_bulto').update(datos).eq('id', tramo.id)
+          : await supabase.from('tarifas_bulto').insert({ configuracion_id: configId, ...datos });
         if (error) throw error;
       }
 
       // tarifas_pallet (solo si la tabla existe — migración 01_tarifas_pallet.sql)
       try {
-        await supabase.from('tarifas_pallet').delete().eq('configuracion_id', configId);
         const palletsFilled = form.tramosPallet.filter((t) => t.desde !== '' && t.precio !== '');
-        if (palletsFilled.length > 0) {
-          await supabase.from('tarifas_pallet').insert(
-            palletsFilled.map((t) => ({ configuracion_id: configId, desde_pallet: Number(t.desde), precio: Number(t.precio), updated_at: fechaActualizacion }))
-          );
+        const palletsConId = palletsFilled.filter((t) => t.id).map((t) => t.id!);
+        const palletsEliminados = editandoId
+          ? (configs.find((c) => c.id === configId)?.tarifas_pallet ?? []).filter((t) => !palletsConId.includes(t.id)).map((t) => t.id)
+          : [];
+        if (palletsEliminados.length) await supabase.from('tarifas_pallet').delete().in('id', palletsEliminados);
+        for (const tramo of palletsFilled) {
+          const datos = { desde_pallet: Number(tramo.desde), precio: parsearNumeroLocal(tramo.precio)!, updated_at: fechaActualizacion };
+          const { error } = tramo.id
+            ? await supabase.from('tarifas_pallet').update(datos).eq('id', tramo.id)
+            : await supabase.from('tarifas_pallet').insert({ configuracion_id: configId, ...datos });
+          if (error) throw error;
         }
       } catch {
         console.warn('tarifas_pallet no encontrada. Ejecutar supabase/migrations/01_tarifas_pallet.sql');
@@ -416,12 +433,18 @@ export function ConfiguracionesClient({
 
       // tarifas_kg
       try {
-        await supabase.from('tarifas_kg').delete().eq('configuracion_id', configId);
         const kgFilled = form.tramosKg.filter((t) => t.desde !== '' && t.precio !== '');
-        if (kgFilled.length > 0) {
-          await supabase.from('tarifas_kg').insert(
-            kgFilled.map((t) => ({ configuracion_id: configId, desde_kg: Number(t.desde), precio: Number(t.precio), updated_at: fechaActualizacion }))
-          );
+        const kgConId = kgFilled.filter((t) => t.id).map((t) => t.id!);
+        const kgEliminados = editandoId
+          ? (configs.find((c) => c.id === configId)?.tarifas_kg ?? []).filter((t) => !kgConId.includes(t.id)).map((t) => t.id)
+          : [];
+        if (kgEliminados.length) await supabase.from('tarifas_kg').delete().in('id', kgEliminados);
+        for (const tramo of kgFilled) {
+          const datos = { desde_kg: Number(tramo.desde), precio: parsearNumeroLocal(tramo.precio)!, updated_at: fechaActualizacion };
+          const { error } = tramo.id
+            ? await supabase.from('tarifas_kg').update(datos).eq('id', tramo.id)
+            : await supabase.from('tarifas_kg').insert({ configuracion_id: configId, ...datos });
+          if (error) throw error;
         }
       } catch {
         console.warn('tarifas_kg no encontrada. Ejecutar supabase/migrations/06_tarifas_kg.sql');
@@ -440,10 +463,10 @@ export function ConfiguracionesClient({
           .map((tag_id) => {
             const precios = form.tagPrecios[tag_id];
             if (!precios) return null;
-            const pBulto = precios.bulto !== '' ? Number(precios.bulto) : null;
-            const pPallet = precios.pallet !== '' ? Number(precios.pallet) : null;
-            const pKg = precios.kg !== '' ? Number(precios.kg) : null;
-            const pCamion = precios.camion_completo !== '' ? Number(precios.camion_completo) : null;
+            const pBulto = precios.bulto !== '' ? parsearNumeroLocal(precios.bulto) : null;
+            const pPallet = precios.pallet !== '' ? parsearNumeroLocal(precios.pallet) : null;
+            const pKg = precios.kg !== '' ? parsearNumeroLocal(precios.kg) : null;
+            const pCamion = precios.camion_completo !== '' ? parsearNumeroLocal(precios.camion_completo) : null;
             // Solo guardar si al menos un precio está definido
             if (pBulto === null && pPallet === null && pKg === null && pCamion === null) return null;
             return {
@@ -485,7 +508,7 @@ export function ConfiguracionesClient({
 
   async function toggleActivo(c: ConfiguracionConRelaciones) {
     const { error } = await supabase.from('configuraciones_envio')
-      .update({ activo: !c.activo, updated_at: new Date().toISOString() }).eq('id', c.id);
+      .update({ activo: !c.activo, es_copia: false, nombre_copia: null, updated_at: new Date().toISOString() }).eq('id', c.id);
     if (error) { toast({ variant: 'destructive', title: 'Error.' }); return; }
     setConfigs((p) => p.map((x) => x.id === c.id ? { ...x, activo: !x.activo } : x));
   }
@@ -502,6 +525,16 @@ export function ConfiguracionesClient({
   async function finalizarImportacion(tid: string) {
     setTransporteId(tid);
     await cargar(tid);
+  }
+
+  async function duplicarConfiguracion(c: ConfiguracionConRelaciones) {
+    const { error } = await supabase.rpc('duplicar_configuracion', { configuracion_origen: c.id });
+    if (error) {
+      toast({ variant: 'destructive', title: 'No se pudo duplicar la configuraciÃ³n.', description: error.message });
+      return;
+    }
+    await cargar(transporteId);
+    toast({ title: 'ConfiguraciÃ³n duplicada.', description: 'La copia queda identificada hasta que la edites y guardes.' });
   }
 
   async function guardarUbicacionPersonalizada() {
@@ -686,6 +719,11 @@ export function ConfiguracionesClient({
                       <Badge variant={c.activo ? 'default' : 'secondary'} className="text-xs">
                         {c.activo ? 'Activa' : 'Inactiva'}
                       </Badge>
+                      {c.es_copia && (
+                        <Badge variant="outline" className="text-xs border-amber-300 bg-amber-50 text-amber-800">
+                          {c.nombre_copia ?? 'Copia pendiente'}
+                        </Badge>
+                      )}
                         <span className={`h-3 w-3 rounded-full ${COLORES_ACTUALIZACION[estado]}`} title={`Última actualización: ${formatearFechaActualizacion(ultimaActualizacion)}`} aria-label={`Última actualización: ${formatearFechaActualizacion(ultimaActualizacion)}`} />
                       {c.apto_peritoneal && (
                         <Badge variant="outline" className="text-xs border-blue-300 text-blue-700 bg-blue-50">
@@ -724,6 +762,7 @@ export function ConfiguracionesClient({
                     {editar && (
                       <>
                         <Switch checked={c.activo} onCheckedChange={() => toggleActivo(c)} aria-label="Activo/Inactivo" />
+                        <Button variant="outline" size="sm" onClick={() => duplicarConfiguracion(c)} title="Duplicar configuraciÃ³n"><Copy className="h-3.5 w-3.5" /></Button>
                         <Button variant="outline" size="sm" onClick={() => abrirEdicion(c)}><Pencil className="h-3.5 w-3.5" /></Button>
                         <Button variant="outline" size="sm" onClick={() => setEliminandoId(c.id)} className="text-destructive hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>
                       </>
@@ -881,7 +920,7 @@ export function ConfiguracionesClient({
                     </div>
                     <div className="flex-1 space-y-1">
                       {idx === 0 && <Label className="text-xs text-muted-foreground">Precio por bulto ($)</Label>}
-                      <Input type="number" min={0} placeholder="18000"
+                      <Input type="text" inputMode="decimal" placeholder="Ej: 18.000,50"
                         value={tramo.precio} onChange={(e) => updTramo('tramosBulto', idx, 'precio', e.target.value)} />
                     </div>
                     {/* Checkbox "Valor inicial" solo en el tramo 1 */}
@@ -960,9 +999,9 @@ export function ConfiguracionesClient({
               <Label htmlFor="precio-camion" className="flex items-center gap-1.5">
                 <Truck className="h-3.5 w-3.5 text-muted-foreground" />Precio camión completo ($)
               </Label>
-              <Input id="precio-camion" type="number" min={0} placeholder="450000" value={form.precio_camion}
-                onChange={(e) => setForm((f) => ({ ...f, precio_camion: e.target.value === '' ? '' : Number(e.target.value) }))} />
-              <p className="text-xs text-muted-foreground">Precio fijo por viaje completo. Dejá vacío si no aplica.</p>
+              <Input id="precio-camion" type="text" inputMode="decimal" placeholder="Ej: 450.000,00" value={form.precio_camion}
+                onChange={(e) => setForm((f) => ({ ...f, precio_camion: e.target.value }))} />
+              <p className="text-xs text-muted-foreground">Acepta punto de miles y coma decimal. Dejá vacío si no aplica.</p>
             </div>
 
             <Separator />
@@ -1012,12 +1051,12 @@ export function ConfiguracionesClient({
                           <div>
                             <label className="text-[11px] text-slate-500 block mb-1">$/Bulto</label>
                             <Input
-                              type="number"
-                              min={0}
-                              placeholder="Ej: 5000"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Ej: 5.000,00"
                               value={precios.bulto}
                               onChange={(e) => {
-                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                const val = e.target.value;
                                 setForm((f) => ({
                                   ...f,
                                   tagPrecios: {
@@ -1032,12 +1071,12 @@ export function ConfiguracionesClient({
                           <div>
                             <label className="text-[11px] text-slate-500 block mb-1">$/Pallet</label>
                             <Input
-                              type="number"
-                              min={0}
-                              placeholder="Ej: 15000"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Ej: 15.000,00"
                               value={precios.pallet}
                               onChange={(e) => {
-                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                const val = e.target.value;
                                 setForm((f) => ({
                                   ...f,
                                   tagPrecios: {
@@ -1052,12 +1091,12 @@ export function ConfiguracionesClient({
                           <div>
                             <label className="text-[11px] text-slate-500 block mb-1">$/Kg (fijo)</label>
                             <Input
-                              type="number"
-                              min={0}
-                              placeholder="Ej: 8000"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Ej: 8.000,00"
                               value={precios.kg}
                               onChange={(e) => {
-                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                const val = e.target.value;
                                 setForm((f) => ({
                                   ...f,
                                   tagPrecios: {
@@ -1072,12 +1111,12 @@ export function ConfiguracionesClient({
                           <div>
                             <label className="text-[11px] text-slate-500 block mb-1">Camión compl. ($)</label>
                             <Input
-                              type="number"
-                              min={0}
-                              placeholder="Ej: 50000"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Ej: 50.000,00"
                               value={precios.camion_completo}
                               onChange={(e) => {
-                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                const val = e.target.value;
                                 setForm((f) => ({
                                   ...f,
                                   tagPrecios: {
@@ -1184,7 +1223,7 @@ function TramoSection({ label, icon, tramos, unidad, paso, onAdd, onUpdate, onDe
             </div>
             <div className="flex-1 space-y-1">
               {idx === 0 && <Label className="text-xs text-muted-foreground">Precio por {unidad} ($)</Label>}
-              <Input type="number" min={0} placeholder="90000"
+              <Input type="text" inputMode="decimal" placeholder="Ej: 90.000,00"
                 value={tramo.precio} onChange={(e) => onUpdate(idx, 'precio', e.target.value)} />
             </div>
             {tramos.length > 1 && (

@@ -12,11 +12,11 @@ export default async function ConfiguracionesPage({
   const params = await searchParams;
   const supabase = await createClient();
 
-  const [{ data: transportes }, { data: todosLosTransportes }, { data: tags }] = await Promise.all([
-    supabase.from('transportes').select('*').eq('activo', true).order('razon_social'),
+  const [{ data: todosLosTransportes }, { data: tags }] = await Promise.all([
     supabase.from('transportes').select('*').order('razon_social'),
     supabase.from('tags').select('*').order('nombre'),
   ]);
+  const transportes = (todosLosTransportes ?? []).filter((transporte) => transporte.activo);
 
   // Si viene preseleccionado un transporte desde la página de Transportes, cargamos sus configs
   let configuracionesIniciales: unknown[] = [];
@@ -36,7 +36,7 @@ export default async function ConfiguracionesPage({
         description="Definí las rutas, tarifas y tiempos de entrega por transporte"
       />
       <ConfiguracionesClient
-        transportes={transportes ?? []}
+        transportes={transportes}
         transportesParaImportar={todosLosTransportes ?? []}
         tagsIniciales={tags ?? []}
         transportePreseleccionadoId={params.transporte ?? null}

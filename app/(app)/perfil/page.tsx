@@ -1,24 +1,14 @@
-import { createClient } from '@/lib/supabase/server';
 import { PerfilClient } from './PerfilClient';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { redirect } from 'next/navigation';
+import { getCurrentUserProfile } from '@/lib/auth/current-user';
 
 export const metadata = { title: 'Mi Perfil — Tarifario' };
 
 export default async function PerfilPage() {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user, perfil } = await getCurrentUserProfile();
 
   if (!user) redirect('/login');
-
-  const { data: perfil } = await supabase
-    .from('perfiles_usuario')
-    .select('*')
-    .eq('id', user.id)
-    .single();
 
   return (
     <div>

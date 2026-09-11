@@ -63,6 +63,9 @@ export interface ConfiguracionEnvio {
   precio_camion_actualizado_at?: string | null;
   apto_peritoneal: boolean;
   activo: boolean;
+  es_copia?: boolean;
+  configuracion_origen_id?: string | null;
+  nombre_copia?: string | null;
   created_at: string;
   updated_at: string;
 }
