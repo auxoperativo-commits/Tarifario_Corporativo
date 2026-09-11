@@ -22,6 +22,27 @@ export interface Tag {
   id: string;
   nombre: string;
   color: string;
+  // Precios opcionales por unidad (solo presentes cuando se cargan con join)
+  configuracion_tag_precios?: TagPrecio[];
+}
+
+/** Precio adicional de un tag dentro de una configuración de envío específica */
+export interface TagPrecio {
+  id: string;
+  configuracion_id: string;
+  tag_id: string;
+  precio_bulto: number | null;
+  precio_pallet: number | null;
+  precio_kg: number | null;
+  precio_camion_completo: number | null;
+}
+
+/** Cantidades enviadas con un tag específico (estado del formulario de envíos) */
+export interface TagCantidad {
+  bultos: number;          // 0 = no aplica
+  pallets: number;         // 0 = no aplica
+  kg: number;              // 0 = no aplica
+  camionCompleto: boolean;
 }
 
 export interface ConfiguracionEnvio {
@@ -173,6 +194,8 @@ export interface BusquedaEnvio {
   cantidadKg: number;        // 0 = no aplica
   camionCompleto: boolean;
   soloPeritoneal: boolean;  // si true: solo mostrar configuraciones apto_peritoneal = true
+  // Tags seleccionados con sus cantidades para sumar costo adicional
+  tagCantidades?: Record<string, TagCantidad>; // key = tag_id
 }
 
 export interface ResultadoEnvio {

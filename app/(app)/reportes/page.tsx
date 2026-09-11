@@ -51,19 +51,7 @@ export default async function ReportesPage() {
   return (
     <div>
       <PageHeader title="Reportes" description="Compará tarifas y concentración de rutas configuradas" />
-      <ReportesClient
-        configuraciones={datos}
-        provinciaData={provinciaData}
-        heatmapData={provinciaData.map((provincia) => ({
-          name: provincia.name,
-          value: provincia.value,
-          localities: provincia.children.map((localidad) => ({
-            name: localidad.name,
-            value: localidad.value,
-          })),
-        }))}
-        totalConfiguraciones={totalConfiguraciones}
-      />
+      <ReportesClient configuraciones={datos} />
     </div>
   );
 }

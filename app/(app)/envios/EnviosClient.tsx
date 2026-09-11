@@ -16,7 +16,7 @@ import {
   type ConfiguracionConDatos,
 } from '@/lib/calculos/envios';
 import type {
-  Tag, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio, UbicacionPersonalizada, Contenedor,
+  Tag, TagCantidad, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio, UbicacionPersonalizada, Contenedor,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -146,6 +146,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
   const [buscando, setBuscando] = useState(false);
   const [orden, setOrden] = useState<OrdenCriterio>('recomendado');
   const [filtroTags, setFiltroTags] = useState<string[]>([]);
+  const [tagCantidades, setTagCantidades] = useState<Record<string, TagCantidad>>({});
   const [ubicacionesPersonalizadas, setUbicacionesPersonalizadas] = useState<UbicacionPersonalizada[]>([]);
   const [contenedores, setContenedores] = useState<Contenedor[]>([]);
   const [contenedorDialogOpen, setContenedorDialogOpen] = useState(false);
@@ -190,6 +191,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         resultados: ResultadoEnvio[] | null;
         orden: OrdenCriterio;
         filtroTags: string[];
+        tagCantidades?: Record<string, TagCantidad>;
       };
 
       setOrigen(estado.origen);
@@ -204,7 +206,8 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
       setSoloPeritoneal(estado.soloPeritoneal);
       setResultados(estado.resultados);
       setOrden(estado.orden);
-      setFiltroTags(estado.filtroTags);
+      setFiltroTags(estado.filtroTags ?? []);
+      if (estado.tagCantidades) setTagCantidades(estado.tagCantidades);
     } catch {
       sessionStorage.removeItem(ULTIMA_BUSQUEDA_KEY);
     }
@@ -218,12 +221,72 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
   const cantBultosNum = Math.max(1, parseInt(cantBultosStr) || 1);
   const cantKgNum = Math.max(1, parseFloat(cantKgStr) || 1);
 
+  // ── Cantidades estándar y totales (incluyendo tags de manera independiente) ────
+  const bultosEstandar = incluyeBultos ? cantBultosNum : 0;
+  const bultosTags = Math.max(0, ...filtroTags.map((id) => tagCantidades[id]?.bultos || 0));
+  const totalBultos = bultosEstandar + bultosTags;
+
+  const palletsEstandar = incluyePallets ? cantPallets : 0;
+  const palletsTags = Math.max(0, ...filtroTags.map((id) => tagCantidades[id]?.pallets || 0));
+  const totalPallets = palletsEstandar + palletsTags;
+
+  const kgEstandar = incluyeKg ? cantKgNum : 0;
+  const kgTags = Math.max(0, ...filtroTags.map((id) => tagCantidades[id]?.kg || 0));
+  const totalKg = kgEstandar + kgTags;
+
+  const camionTags = filtroTags.some((id) => tagCantidades[id]?.camionCompleto);
+  const totalCamionCompleto = camionCompleto || camionTags;
+
+  // ── Tags con cantidades ───────────────────────────────────────────────────
+  function toggleTag(tagId: string) {
+    setFiltroTags((actuales) => {
+      const activo = actuales.includes(tagId);
+      if (activo) {
+        setTagCantidades((prev) => {
+          const copia = { ...prev };
+          delete copia[tagId];
+          return copia;
+        });
+        return actuales.filter((id) => id !== tagId);
+      } else {
+        const sugerirPallets = incluyePallets && !incluyeBultos && !incluyeKg && !camionCompleto;
+        const sugerirKg = incluyeKg && !incluyeBultos && !incluyePallets && !camionCompleto;
+        const sugerirCamion = camionCompleto && !incluyeBultos && !incluyePallets && !incluyeKg;
+
+        setTagCantidades((prev) => ({
+          ...prev,
+          [tagId]: {
+            bultos: (!sugerirPallets && !sugerirKg && !sugerirCamion) ? (incluyeBultos ? cantBultosNum : 1) : 0,
+            pallets: sugerirPallets ? cantPallets : 0,
+            kg: sugerirKg ? cantKgNum : 0,
+            camionCompleto: sugerirCamion,
+          },
+        }));
+        return [...actuales, tagId];
+      }
+    });
+  }
+
+  function updateTagCantidad<K extends keyof TagCantidad>(
+    tagId: string,
+    campo: K,
+    valor: TagCantidad[K]
+  ) {
+    setTagCantidades((prev) => ({
+      ...prev,
+      [tagId]: {
+        ...(prev[tagId] || { bultos: 0, pallets: 0, kg: 0, camionCompleto: false }),
+        [campo]: valor,
+      },
+    }));
+  }
+
   // ── Buscar ─────────────────────────────────────────────────────────────────
   const buscar = useCallback(() => {
     if (!origen?.provincia) { toast({ variant: 'destructive', title: 'Seleccioná el origen.' }); return; }
     if (!destino?.provincia) { toast({ variant: 'destructive', title: 'Seleccioná el destino.' }); return; }
-    if (!incluyeBultos && !incluyePallets && !incluyeKg && !camionCompleto) {
-      toast({ variant: 'destructive', title: 'Indicá al menos un tipo de carga.' });
+    if (totalBultos === 0 && totalPallets === 0 && totalKg === 0 && !totalCamionCompleto) {
+      toast({ variant: 'destructive', title: 'Indicá al menos un tipo de carga (estándar o en tags).' });
       return;
     }
 
@@ -232,27 +295,24 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
       const busqueda: BusquedaEnvio = {
         origen: origen!,
         destino: destino!,
-        cantidadBultos: incluyeBultos ? cantBultosNum : 0,
-        cantidadPallets: incluyePallets ? cantPallets : 0,
-        cantidadKg: incluyeKg ? cantKgNum : 0,
-        camionCompleto,
+        cantidadBultos: bultosEstandar,
+        cantidadPallets: palletsEstandar,
+        cantidadKg: kgEstandar,
+        camionCompleto: camionCompleto,
         soloPeritoneal,
+        tagCantidades,
       };
       const configs = configuracionesRaw as ConfiguracionConDatos[];
-      const candidatos = filtrarConfiguraciones(configs, busqueda).filter((config) => {
-        if (filtroTags.length === 0) return true;
-        const configTags = extraerTags(config);
-        return filtroTags.every((tagId) => configTags.some((tag) => tag.id === tagId));
-      });
+      const candidatos = filtrarConfiguraciones(configs, busqueda);
       const conPrecios = candidatos.map((config) => ({
         config,
         desglose: calcularPrecio(config, busqueda),
         origenSeleccionado: origen,
         destinoSeleccionado: destino,
-        cantidadBultos: incluyeBultos ? cantBultosNum : 0,
-        cantidadPallets: incluyePallets ? cantPallets : 0,
-        cantidadKg: incluyeKg ? cantKgNum : 0,
-        camionCompleto,
+        cantidadBultos: totalBultos,
+        cantidadPallets: totalPallets,
+        cantidadKg: totalKg,
+        camionCompleto: totalCamionCompleto,
       }));
       const nuevosResultados = calcularRanking(conPrecios);
       setResultados(nuevosResultados);
@@ -270,21 +330,24 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
         soloPeritoneal,
         resultados: nuevosResultados,
         orden: 'recomendado',
-        filtroTags: [],
+        filtroTags,
+        tagCantidades,
       }));
     } catch {
       toast({ variant: 'destructive', title: 'Error al calcular resultados.' });
     } finally {
       setBuscando(false);
     }
-  }, [origen, destino, incluyeBultos, cantBultosStr, cantBultosNum, incluyePallets, cantPallets, incluyeKg, cantKgStr, cantKgNum, camionCompleto, soloPeritoneal, filtroTags, configuracionesRaw, toast]);
+  }, [origen, destino, totalBultos, totalPallets, totalKg, totalCamionCompleto, incluyeBultos, cantBultosStr, incluyePallets, cantPallets, incluyeKg, cantKgStr, camionCompleto, soloPeritoneal, filtroTags, tagCantidades, configuracionesRaw, toast]);
 
   // ── Ordenar / filtrar resultados ───────────────────────────────────────────
   const resultadosOrdenados = useMemo(() => {
     if (!resultados) return [];
     let filtrados = resultados;
     if (filtroTags.length > 0) {
-      filtrados = resultados.filter((r) => filtroTags.some((id) => r.tags.some((t) => t.id === id)));
+      filtrados = resultados.filter((r) =>
+        filtroTags.every((id) => r.tags.some((t) => t.id === id))
+      );
     }
     if (orden === 'precio') return [...filtrados].sort((a, b) => a.precioTotal - b.precioTotal);
     if (orden === 'tiempo') {
@@ -357,11 +420,16 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
 
         {/* Carga */}
         <div>
-          <Label className="mb-3 block text-sm font-medium">¿Qué vas a enviar?</Label>
+          <div className="mb-3">
+            <Label className="text-sm font-medium">¿Qué vas a enviar?</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Indicá tu carga estándar aquí, y/o abajo en <b>Tags y adicionales</b> para bultos con requisitos especiales (como Cadena de Frío).
+            </p>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
 
             {/* ── Bultos ── */}
-            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeBultos ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeBultos ? 'border-primary bg-primary/5' : bultosTags > 0 ? 'border-primary/40 bg-primary/[0.02]' : 'border-border'}`}>
               {/* Header — solo el click acá activa/desactiva */}
               <button
                 type="button"
@@ -370,11 +438,18 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
               >
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Bultos</span>
+                  <span className="text-sm font-medium">Bultos (estándar)</span>
                 </div>
-                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyeBultos ? 'bg-primary border-primary' : 'border-slate-300'}`}>
-                  {incluyeBultos && <span className="text-white text-xs font-bold">✓</span>}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {!incluyeBultos && bultosTags > 0 && (
+                    <span className="text-[10px] text-primary font-medium bg-primary/10 rounded px-1.5 py-0.5">
+                      +{bultosTags} en tags
+                    </span>
+                  )}
+                  <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyeBultos ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                    {incluyeBultos && <span className="text-white text-xs font-bold">✓</span>}
+                  </span>
+                </div>
               </button>
               {/* Input — independiente del toggle */}
               {incluyeBultos && (
@@ -398,13 +473,13 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
               )}
               {incluyeBultos && (
                 <p className="text-xs text-muted-foreground mt-1.5 text-center">
-                  {cantBultosNum} bulto{cantBultosNum !== 1 ? 's' : ''}
+                  {cantBultosNum} bulto{cantBultosNum !== 1 ? 's' : ''} estándar
                 </p>
               )}
             </div>
 
             {/* ── Pallets — selector discreto ── */}
-            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyePallets ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyePallets ? 'border-primary bg-primary/5' : palletsTags > 0 ? 'border-primary/40 bg-primary/[0.02]' : 'border-border'}`}>
               <button
                 type="button"
                 className="w-full flex items-center justify-between mb-2"
@@ -412,11 +487,18 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
               >
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold bg-slate-200 text-slate-600 rounded px-1.5 py-0.5">P</span>
-                  <span className="text-sm font-medium">Pallets</span>
+                  <span className="text-sm font-medium">Pallets (estándar)</span>
                 </div>
-                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyePallets ? 'bg-primary border-primary' : 'border-slate-300'}`}>
-                  {incluyePallets && <span className="text-white text-xs font-bold">✓</span>}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {!incluyePallets && palletsTags > 0 && (
+                    <span className="text-[10px] text-primary font-medium bg-primary/10 rounded px-1.5 py-0.5">
+                      +{palletsTags} en tags
+                    </span>
+                  )}
+                  <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyePallets ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                    {incluyePallets && <span className="text-white text-xs font-bold">✓</span>}
+                  </span>
+                </div>
               </button>
               {/* Selector de preset — no afecta el toggle */}
               {incluyePallets && (
@@ -452,7 +534,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
             </div>
 
             {/* ── KG ── */}
-            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeKg ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <div className={`rounded-xl border-2 p-3 transition-colors ${incluyeKg ? 'border-primary bg-primary/5' : kgTags > 0 ? 'border-primary/40 bg-primary/[0.02]' : 'border-border'}`}>
               <button
                 type="button"
                 className="w-full flex items-center justify-between mb-2"
@@ -460,11 +542,18 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
               >
                 <div className="flex items-center gap-2">
                   <Weight className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Kg</span>
+                  <span className="text-sm font-medium">Kg (estándar)</span>
                 </div>
-                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyeKg ? 'bg-primary border-primary' : 'border-slate-300'}`}>
-                  {incluyeKg && <span className="text-white text-xs font-bold">✓</span>}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {!incluyeKg && kgTags > 0 && (
+                    <span className="text-[10px] text-primary font-medium bg-primary/10 rounded px-1.5 py-0.5">
+                      +{kgTags} en tags
+                    </span>
+                  )}
+                  <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${incluyeKg ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                    {incluyeKg && <span className="text-white text-xs font-bold">✓</span>}
+                  </span>
+                </div>
               </button>
               {incluyeKg && (
                 <div className="flex items-center gap-1 mt-1">
@@ -493,7 +582,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
             </div>
 
             {/* ── Camión completo ── */}
-            <div className={`rounded-xl border-2 p-3 transition-colors ${camionCompleto ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <div className={`rounded-xl border-2 p-3 transition-colors ${camionCompleto ? 'border-primary bg-primary/5' : camionTags ? 'border-primary/40 bg-primary/[0.02]' : 'border-border'}`}>
               <button
                 type="button"
                 className="w-full flex items-center justify-between"
@@ -503,9 +592,16 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
                   <Truck className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm font-medium">Camión completo</span>
                 </div>
-                <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${camionCompleto ? 'bg-primary border-primary' : 'border-slate-300'}`}>
-                  {camionCompleto && <span className="text-white text-xs font-bold">✓</span>}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {!camionCompleto && camionTags && (
+                    <span className="text-[10px] text-primary font-medium bg-primary/10 rounded px-1.5 py-0.5">
+                      En tags
+                    </span>
+                  )}
+                  <span className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${camionCompleto ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                    {camionCompleto && <span className="text-white text-xs font-bold">✓</span>}
+                  </span>
+                </div>
               </button>
               {camionCompleto && (
                 <p className="text-xs text-muted-foreground mt-2">Precio fijo por viaje completo</p>
@@ -516,46 +612,163 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, perfilDefaul
           {tagsDisponibles.length > 0 && (
             <div className="mt-4 border-t pt-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <Label className="text-sm font-medium">Filtrar por Tags <span className="font-normal text-muted-foreground">(opcional)</span></Label>
-                {filtroTags.length > 0 && <button type="button" onClick={() => setFiltroTags([])} className="text-xs text-primary hover:underline">Quitar todos</button>}
+                <Label className="text-sm font-medium">
+                  Tags y adicionales <span className="font-normal text-muted-foreground">(opcional)</span>
+                </Label>
+                {filtroTags.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFiltroTags([]);
+                      setTagCantidades({});
+                    }}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Quitar todos
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 {tagsDisponibles.map((tag) => {
                   const activo = filtroTags.includes(tag.id);
                   return (
-                    <button key={tag.id} type="button" onClick={() => setFiltroTags((actuales) => activo ? actuales.filter((id) => id !== tag.id) : [...actuales, tag.id])}
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => toggleTag(tag.id)}
                       className="inline-flex items-center gap-1.5 rounded-full border-2 px-3 py-1 text-xs font-medium transition-colors"
-                      style={activo ? { backgroundColor: tag.color, borderColor: tag.color, color: 'white' } : { borderColor: tag.color, color: tag.color }}>
+                      style={activo ? { backgroundColor: tag.color, borderColor: tag.color, color: 'white' } : { borderColor: tag.color, color: tag.color }}
+                    >
                       {tag.nombre}{activo && <X className="h-3 w-3" />}
                     </button>
                   );
                 })}
               </div>
-              {filtroTags.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Se mostrarán configuraciones que tengan todos los Tags seleccionados.</p>}
+
+              {/* Panel de cantidades con recargo para cada tag seleccionado */}
+              {filtroTags.length > 0 && (
+                <div className="mt-3 space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                  <p className="text-xs font-medium text-slate-700">
+                    Cantidades con costo adicional para cada tag seleccionado:
+                  </p>
+                  {filtroTags.map((tagId) => {
+                    const tag = tagsDisponibles.find((t) => t.id === tagId);
+                    if (!tag) return null;
+                    const cant = tagCantidades[tagId] || { bultos: 0, pallets: 0, kg: 0, camionCompleto: false };
+                    return (
+                      <div key={tagId} className="rounded-md border border-slate-200 bg-white p-2.5 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                            {tag.nombre}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleTag(tagId)}
+                            className="text-slate-400 hover:text-slate-600 text-xs"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">Bultos</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={cant.bultos}
+                              onChange={(e) => updateTagCantidad(tagId, 'bultos', Math.max(0, parseInt(e.target.value) || 0))}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">Pallets</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={0.5}
+                              value={cant.pallets}
+                              onChange={(e) => updateTagCantidad(tagId, 'pallets', Math.max(0, parseFloat(e.target.value) || 0))}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">Kg</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={cant.kg}
+                              onChange={(e) => updateTagCantidad(tagId, 'kg', Math.max(0, parseFloat(e.target.value) || 0))}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div className="flex items-end pb-1.5">
+                            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={cant.camionCompleto}
+                                onChange={(e) => updateTagCantidad(tagId, 'camionCompleto', e.target.checked)}
+                                className="rounded border-slate-300 text-primary h-3.5 w-3.5"
+                              />
+                              <span>Camión compl.</span>
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
           {/* Resumen */}
-          {(incluyeBultos || incluyePallets || incluyeKg || camionCompleto) && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {incluyeBultos && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
-                  <Package className="h-3 w-3" />{cantBultosNum} bulto{cantBultosNum !== 1 ? 's' : ''}
+          {(totalBultos > 0 || totalPallets > 0 || totalKg > 0 || totalCamionCompleto) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+              <span className="text-xs font-semibold text-slate-500">Carga total a cotizar:</span>
+              {totalBultos > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-medium border border-primary/20">
+                  <Package className="h-3.5 w-3.5" />
+                  <span>{totalBultos} bulto{totalBultos !== 1 ? 's' : ''}</span>
+                  {bultosEstandar > 0 && bultosTags > 0 && (
+                    <span className="text-[11px] opacity-75">({bultosEstandar} estándar + {bultosTags} con tag)</span>
+                  )}
+                  {bultosEstandar === 0 && bultosTags > 0 && (
+                    <span className="text-[11px] opacity-75">({bultosTags} con tag)</span>
+                  )}
                 </span>
               )}
-              {incluyePallets && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
-                  <span className="text-[10px] font-bold">P</span>{labelPallets(cantPallets)}
+              {totalPallets > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-medium border border-primary/20">
+                  <span className="text-[10px] font-bold bg-primary/20 rounded px-1">P</span>
+                  <span>{labelPallets(totalPallets)}</span>
+                  {palletsEstandar > 0 && palletsTags > 0 && (
+                    <span className="text-[11px] opacity-75">({palletsEstandar} estándar + {palletsTags} con tag)</span>
+                  )}
+                  {palletsEstandar === 0 && palletsTags > 0 && (
+                    <span className="text-[11px] opacity-75">({palletsTags} con tag)</span>
+                  )}
                 </span>
               )}
-              {incluyeKg && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
-                  <Weight className="h-3 w-3" />{labelKg(cantKgNum)}
+              {totalKg > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-medium border border-primary/20">
+                  <Weight className="h-3.5 w-3.5" />
+                  <span>{labelKg(totalKg)}</span>
+                  {kgEstandar > 0 && kgTags > 0 && (
+                    <span className="text-[11px] opacity-75">({kgEstandar} estándar + {kgTags} con tag)</span>
+                  )}
+                  {kgEstandar === 0 && kgTags > 0 && (
+                    <span className="text-[11px] opacity-75">({kgTags} con tag)</span>
+                  )}
                 </span>
               )}
-              {camionCompleto && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium">
-                  <Truck className="h-3 w-3" />Camión completo
+              {totalCamionCompleto && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-medium border border-primary/20">
+                  <Truck className="h-3.5 w-3.5" />
+                  <span>Camión completo</span>
+                  {camionTags && !camionCompleto && (
+                    <span className="text-[11px] opacity-75">(definido en tags)</span>
+                  )}
                 </span>
               )}
             </div>
@@ -637,6 +850,8 @@ interface ResultadoCardProps {
 
 function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
   const { transporte, tags, precioTotal, tiempoMin, tiempoMax, desglose } = resultado;
+  const montoIva = Math.round(precioTotal * 0.21);
+  const precioConIva = precioTotal + montoIva;
   const esBest = posicion === 0;
   const estado = estadoActualizacion(resultado.configuracion.updated_at);
   const { toast } = useToast();
@@ -734,9 +949,10 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
           </div>
           <div className="flex flex-wrap items-baseline gap-4">
             <div>
-              <span className="text-2xl font-bold text-slate-900">{formatearPrecio(precioTotal)}</span>
-              <span className="text-xs text-muted-foreground ml-1">total</span>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Precio aproximado (sin IVA y sin seguro)</p>
+              <span className="text-2xl font-bold text-slate-900">{formatearPrecio(precioConIva)}</span>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Con IVA y sin seguro <span className="font-medium text-slate-600">(+ IVA 21%: {formatearPrecio(montoIva)})</span>
+              </p>
             </div>
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />{formatearTiempo(tiempoMin, tiempoMax)}
@@ -820,9 +1036,18 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
                 </div>
               ))}
               <Separator className="my-2" />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Subtotal neto</span>
+                <span className="font-medium tabular-nums">{formatearPrecio(desglose.total)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">IVA (21%)</span>
+                <span className="font-medium tabular-nums">{formatearPrecio(montoIva)}</span>
+              </div>
+              <Separator className="my-1.5" />
               <div className="flex items-center justify-between text-sm font-semibold">
-                <span>Total</span>
-                <span className="text-primary">{formatearPrecio(desglose.total)}</span>
+                <span>Total final (con IVA)</span>
+                <span className="text-primary text-base">{formatearPrecio(precioConIva)}</span>
               </div>
             </div>
           </AccordionContent>

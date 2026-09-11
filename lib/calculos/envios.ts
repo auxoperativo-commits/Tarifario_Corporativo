@@ -2,6 +2,7 @@ import type {
   ConfiguracionEnvio,
   Transporte,
   Tag,
+  TagPrecio,
   TarifaBulto,
   TarifaPallet,
   TarifaKg,
@@ -20,7 +21,8 @@ export interface ConfiguracionConDatos extends ConfiguracionEnvio {
   tarifas_kg?: TarifaKg[];
   transportes: Transporte;
   // Los tags vienen anidados desde Supabase como configuracion_tags[].tags
-  configuracion_tags?: Array<{ tag_id: string; tags: Tag | null }>;
+  configuracion_tags?: Array<{ tag_id: string; tags: Tag | null; configuracion_tag_precios?: TagPrecio[] }>;
+  configuracion_tag_precios?: TagPrecio[];
   // También puede venir aplanado directamente
   tags?: Tag[];
 }
@@ -103,20 +105,48 @@ export function filtrarConfiguraciones(
     return matchOrigen && matchDestino;
   });
 
+  // Identificar tags requeridos (tags seleccionados con bultos/pallets/kg/camión > 0)
+  const tagsRequeridos = Object.entries(busqueda.tagCantidades ?? {})
+    .filter(([_, cant]) => (cant.bultos || 0) > 0 || (cant.pallets || 0) > 0 || (cant.kg || 0) > 0 || cant.camionCompleto)
+    .map(([tagId]) => tagId);
+
+  const bultosEnTags = Object.values(busqueda.tagCantidades ?? {}).reduce((acc, c) => acc + (c.bultos || 0), 0);
+  const totalBultosReq = cantidadBultos + bultosEnTags;
+
+  const palletsEnTags = Object.values(busqueda.tagCantidades ?? {}).reduce((acc, c) => acc + (c.pallets || 0), 0);
+  const totalPalletsReq = cantidadPallets + palletsEnTags;
+
+  const kgEnTags = Object.values(busqueda.tagCantidades ?? {}).reduce((acc, c) => acc + (c.kg || 0), 0);
+  const totalKgReq = cantidadKg + kgEnTags;
+
+  const camionEnTags = Object.values(busqueda.tagCantidades ?? {}).some((c) => c.camionCompleto);
+  const totalCamionReq = camionCompleto || camionEnTags;
+
+  const cumpleRequisitos = (c: ConfiguracionConDatos) => {
+    if (totalBultosReq > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
+    if (totalPalletsReq > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
+    if (totalKgReq > 0 && (!c.tarifas_kg || c.tarifas_kg.length === 0)) return false;
+    if (totalCamionReq && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
+    if (busqueda.soloPeritoneal && !c.apto_peritoneal) return false;
+
+    if (tagsRequeridos.length > 0) {
+      const tagsC = extraerTags(c);
+      const tieneTodos = tagsRequeridos.every((reqId) => tagsC.some((t) => t.id === reqId));
+      if (!tieneTodos) return false;
+    }
+    return true;
+  };
+
+  const validas = matcheadoras.filter(cumpleRequisitos);
+
   // Con búsqueda solo por provincia, conservar todas las localidades configuradas.
   if (origen.localidad === null && destino.localidad === null) {
-    return matcheadoras.filter((c) => {
-      if (cantidadBultos > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
-      if (cantidadPallets > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
-      if (cantidadKg > 0 && (!c.tarifas_kg || c.tarifas_kg.length === 0)) return false;
-      if (camionCompleto && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
-      return !busqueda.soloPeritoneal || c.apto_peritoneal;
-    });
+    return validas;
   }
 
   // Si se eligió una localidad, priorizar la configuración más específica por transporte.
   const porTransporte = new Map<string, ConfiguracionConDatos>();
-  for (const config of matcheadoras) {
+  for (const config of validas) {
     const existing = porTransporte.get(config.transporte_id);
     if (!existing) {
       porTransporte.set(config.transporte_id, config);
@@ -129,15 +159,7 @@ export function filtrarConfiguraciones(
     }
   }
 
-  // Filtrar las que tienen datos para lo que se pide + filtro peritoneal
-  return Array.from(porTransporte.values()).filter((c) => {
-    if (cantidadBultos > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
-    if (cantidadPallets > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
-    if (cantidadKg > 0 && (!c.tarifas_kg || c.tarifas_kg.length === 0)) return false;
-    if (camionCompleto && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
-    if (busqueda.soloPeritoneal && !c.apto_peritoneal) return false;
-    return true;
-  });
+  return Array.from(porTransporte.values());
 }
 
 // ── Cálculo de precio total ────────────────────────────────────────────────────
@@ -179,6 +201,76 @@ export function calcularPrecio(
       subtotal: precio,
     });
     total += precio;
+  }
+
+  // ── Costo adicional por Tags seleccionados ─────────────────────────────────
+  const tagCantidades = busqueda.tagCantidades ?? {};
+  for (const [tagId, cantidades] of Object.entries(tagCantidades)) {
+    const entradaTag = config.configuracion_tags?.find((ct) => ct.tag_id === tagId);
+    const tieneTag = !!entradaTag || (config.tags?.some((t) => t.id === tagId) ?? false);
+    if (!tieneTag) continue;
+
+    const precioData = config.configuracion_tag_precios?.find((p) => p.tag_id === tagId)
+      ?? entradaTag?.configuracion_tag_precios?.[0];
+
+    const tagNombre = entradaTag?.tags?.nombre
+      ?? config.tags?.find((t) => t.id === tagId)?.nombre
+      ?? 'Tag';
+
+    if (cantidades.bultos > 0) {
+      const precioUnit = precioData?.precio_bulto ?? 0;
+      const subtotal = precioUnit * cantidades.bultos;
+      items.push({
+        descripcion: precioUnit > 0
+          ? `${tagNombre} · ${cantidades.bultos} bulto${cantidades.bultos !== 1 ? 's' : ''} × ${formatearPrecio(precioUnit)}`
+          : `${tagNombre} · ${cantidades.bultos} bulto${cantidades.bultos !== 1 ? 's' : ''} (sin costo adicional)`,
+        precio: precioUnit,
+        cantidad: cantidades.bultos,
+        subtotal,
+      });
+      total += subtotal;
+    }
+
+    if (cantidades.pallets > 0) {
+      const precioUnit = precioData?.precio_pallet ?? 0;
+      const subtotal = precioUnit * cantidades.pallets;
+      items.push({
+        descripcion: precioUnit > 0
+          ? `${tagNombre} · ${cantidades.pallets} pallet${cantidades.pallets !== 1 ? 's' : ''} × ${formatearPrecio(precioUnit)}`
+          : `${tagNombre} · ${cantidades.pallets} pallet${cantidades.pallets !== 1 ? 's' : ''} (sin costo adicional)`,
+        precio: precioUnit,
+        cantidad: cantidades.pallets,
+        subtotal,
+      });
+      total += subtotal;
+    }
+
+    if (cantidades.kg > 0) {
+      const precioUnit = precioData?.precio_kg ?? 0;
+      const subtotal = precioUnit;
+      items.push({
+        descripcion: precioUnit > 0
+          ? `${tagNombre} · ${cantidades.kg} kg = ${formatearPrecio(precioUnit)}`
+          : `${tagNombre} · ${cantidades.kg} kg (sin costo adicional)`,
+        precio: precioUnit,
+        cantidad: cantidades.kg,
+        subtotal,
+      });
+      total += subtotal;
+    }
+
+    if (cantidades.camionCompleto) {
+      const precioUnit = precioData?.precio_camion_completo ?? 0;
+      const subtotal = precioUnit;
+      items.push({
+        descripcion: precioUnit > 0
+          ? `${tagNombre} · Camión completo = ${formatearPrecio(precioUnit)}`
+          : `${tagNombre} · Camión completo (sin costo adicional)`,
+        precio: precioUnit,
+        subtotal,
+      });
+      total += subtotal;
+    }
   }
 
   return { items, total };

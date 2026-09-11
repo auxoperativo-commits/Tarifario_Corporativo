@@ -11,7 +11,7 @@ import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
   Transporte, Tag, ConfiguracionEnvio,
-  TarifaBulto, TarifaPallet, TarifaKg, UbicacionSeleccionada, UbicacionPersonalizada,
+  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -47,7 +47,8 @@ interface ConfiguracionConRelaciones extends ConfiguracionEnvio {
   tarifas_bulto: TarifaBulto[];
   tarifas_pallet?: TarifaPallet[];
   tarifas_kg?: TarifaKg[];
-  configuracion_tags: { tag_id: string }[];
+  configuracion_tags: { tag_id: string; configuracion_tag_precios?: TagPrecio[] }[];
+  configuracion_tag_precios?: TagPrecio[];
 }
 
 interface FormData {
@@ -62,6 +63,13 @@ interface FormData {
   tramosPallet: TramoForm[];
   tramosKg: TramoForm[];
   tagIds: string[];
+  // Precios adicionales por tag: clave = tag_id, valor = precios opcionales por unidad
+  tagPrecios: Record<string, {
+    bulto: number | '';
+    pallet: number | '';
+    kg: number | '';
+    camion_completo: number | '';
+  }>;
 }
 
 type EstadoActualizacion = 'vigente' | 'atencion' | 'desactualizado';
@@ -120,6 +128,7 @@ const FORM_VACIO: FormData = {
   tramosPallet: [{ desde: 1, precio: '' }],
   tramosKg: [{ desde: 1, precio: '' }],
   tagIds: [],
+  tagPrecios: {},
 };
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -181,7 +190,7 @@ export function ConfiguracionesClient({
     setLoading(true);
     const { data, error } = await supabase
       .from('configuraciones_envio')
-      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id)`)
+      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id), configuracion_tag_precios(*)`)
       .eq('transporte_id', tid)
       .order('created_at', { ascending: false });
     if (error) toast({ variant: 'destructive', title: 'Error al cargar configuraciones.' });
@@ -247,6 +256,21 @@ export function ConfiguracionesClient({
       tramosPallet: toTramosPallet(c.tarifas_pallet ?? []),
       tramosKg: toTramosKg(c.tarifas_kg ?? []),
       tagIds: c.configuracion_tags.map((ct) => ct.tag_id),
+      // Cargar precios de tag existentes en el formulario
+      tagPrecios: Object.fromEntries(
+        (c.configuracion_tag_precios && c.configuracion_tag_precios.length > 0
+          ? c.configuracion_tag_precios
+          : c.configuracion_tags.flatMap((ct) => ct.configuracion_tag_precios ?? [])
+        ).map((p) => [
+          p.tag_id,
+          {
+            bulto: p.precio_bulto ?? '',
+            pallet: p.precio_pallet ?? '',
+            kg: p.precio_kg ?? '',
+            camion_completo: p.precio_camion_completo ?? '',
+          },
+        ])
+      ),
     });
     setEditandoId(c.id);
     setDialogOpen(true);
@@ -271,10 +295,21 @@ export function ConfiguracionesClient({
 
   // ── Tags ──────────────────────────────────────────────────────────────────
   function toggleTag(id: string) {
-    setForm((f) => ({
-      ...f,
-      tagIds: f.tagIds.includes(id) ? f.tagIds.filter((x) => x !== id) : [...f.tagIds, id],
-    }));
+    setForm((f) => {
+      const seleccionado = f.tagIds.includes(id);
+      const nuevosTagIds = seleccionado ? f.tagIds.filter((x) => x !== id) : [...f.tagIds, id];
+      const nuevosTagPrecios = { ...f.tagPrecios };
+      if (!seleccionado) {
+        // Inicializar entrada de precios vacía para el tag recién seleccionado
+        if (!nuevosTagPrecios[id]) {
+          nuevosTagPrecios[id] = { bulto: '', pallet: '', kg: '', camion_completo: '' };
+        }
+      } else {
+        // Limpiar los precios del tag deseleccionado
+        delete nuevosTagPrecios[id];
+      }
+      return { ...f, tagIds: nuevosTagIds, tagPrecios: nuevosTagPrecios };
+    });
   }
 
   async function crearTag() {
@@ -286,7 +321,11 @@ export function ConfiguracionesClient({
     setCreandoTag(false);
     if (error) { toast({ variant: 'destructive', title: 'Error al crear tag.' }); return; }
     setTags((prev) => [...prev, data].sort((a, b) => a.nombre.localeCompare(b.nombre)));
-    setForm((f) => ({ ...f, tagIds: [...f.tagIds, data.id] }));
+    setForm((f) => ({
+      ...f,
+      tagIds: [...f.tagIds, data.id],
+      tagPrecios: { ...f.tagPrecios, [data.id]: { bulto: '', pallet: '', kg: '', camion_completo: '' } },
+    }));
     setNuevaTagNombre('');
   }
 
@@ -294,6 +333,9 @@ export function ConfiguracionesClient({
   function validar(): string | null {
     if (!form.origen?.provincia) return 'Seleccioná el origen.';
     if (!form.destino?.provincia) return 'Seleccioná el destino.';
+    if (form.tiempo_min === '' || form.tiempo_max === '') return 'El tiempo estimado mínimo y máximo son obligatorios.';
+    if (Number(form.tiempo_min) < 0 || Number(form.tiempo_max) < 0) return 'El tiempo estimado no puede ser negativo.';
+    if (Number(form.tiempo_min) > Number(form.tiempo_max)) return 'El tiempo mínimo no puede ser mayor al máximo.';
 
     for (const [campo, label] of [['tramosBulto', 'bulto'], ['tramosPallet', 'pallet'], ['tramosKg', 'kg']] as const) {
       const filled = form[campo].filter((t) => t.desde !== '' && t.precio !== '');
@@ -385,12 +427,42 @@ export function ConfiguracionesClient({
         console.warn('tarifas_kg no encontrada. Ejecutar supabase/migrations/06_tarifas_kg.sql');
       }
 
-      // tags
+      // tags + precios de tag
       await supabase.from('configuracion_tags').delete().eq('configuracion_id', configId);
+      // Borrar precios de tag anteriores de esta configuración
+      try { await supabase.from('configuracion_tag_precios').delete().eq('configuracion_id', configId); } catch { /* tabla opcional */ }
       if (form.tagIds.length > 0) {
         await supabase.from('configuracion_tags').insert(
           form.tagIds.map((tag_id) => ({ configuracion_id: configId, tag_id }))
         );
+        // Guardar precios de tag (solo los que tienen al menos un precio definido)
+        const tagPreciosParaGuardar = form.tagIds
+          .map((tag_id) => {
+            const precios = form.tagPrecios[tag_id];
+            if (!precios) return null;
+            const pBulto = precios.bulto !== '' ? Number(precios.bulto) : null;
+            const pPallet = precios.pallet !== '' ? Number(precios.pallet) : null;
+            const pKg = precios.kg !== '' ? Number(precios.kg) : null;
+            const pCamion = precios.camion_completo !== '' ? Number(precios.camion_completo) : null;
+            // Solo guardar si al menos un precio está definido
+            if (pBulto === null && pPallet === null && pKg === null && pCamion === null) return null;
+            return {
+              configuracion_id: configId,
+              tag_id,
+              precio_bulto: pBulto,
+              precio_pallet: pPallet,
+              precio_kg: pKg,
+              precio_camion_completo: pCamion,
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null);
+        if (tagPreciosParaGuardar.length > 0) {
+          try {
+            await supabase.from('configuracion_tag_precios').insert(tagPreciosParaGuardar);
+          } catch {
+            console.warn('configuracion_tag_precios no encontrada. Ejecutar supabase/migrations/07_tag_precios.sql');
+          }
+        }
       }
 
       toast({ title: editandoId ? 'Configuración actualizada.' : 'Configuración creada.' });
@@ -910,7 +982,7 @@ export function ConfiguracionesClient({
                   );
                 })}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 mb-4">
                 <Input placeholder="Nueva tag..." value={nuevaTagNombre}
                   onChange={(e) => setNuevaTagNombre(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), crearTag())}
@@ -919,6 +991,110 @@ export function ConfiguracionesClient({
                   {creandoTag ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                 </Button>
               </div>
+
+              {/* Precios adicionales por tag seleccionado */}
+              {form.tagIds.length > 0 && (
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="text-xs font-semibold text-slate-700">
+                    Precios adicionales por Tag (opcional — dejar vacío si no aplica recargo):
+                  </div>
+                  {form.tagIds.map((tagId) => {
+                    const tag = tags.find((t) => t.id === tagId);
+                    if (!tag) return null;
+                    const precios = form.tagPrecios[tagId] || { bulto: '', pallet: '', kg: '', camion_completo: '' };
+                    return (
+                      <div key={tagId} className="rounded-md border border-slate-200 bg-white p-2.5 shadow-sm space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                          <span className="text-xs font-medium text-slate-800">{tag.nombre}</span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">$/Bulto</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="Ej: 5000"
+                              value={precios.bulto}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                setForm((f) => ({
+                                  ...f,
+                                  tagPrecios: {
+                                    ...f.tagPrecios,
+                                    [tagId]: { ...(f.tagPrecios[tagId] ?? { bulto: '', pallet: '', kg: '', camion_completo: '' }), bulto: val },
+                                  },
+                                }));
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">$/Pallet</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="Ej: 15000"
+                              value={precios.pallet}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                setForm((f) => ({
+                                  ...f,
+                                  tagPrecios: {
+                                    ...f.tagPrecios,
+                                    [tagId]: { ...(f.tagPrecios[tagId] ?? { bulto: '', pallet: '', kg: '', camion_completo: '' }), pallet: val },
+                                  },
+                                }));
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">$/Kg (fijo)</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="Ej: 8000"
+                              value={precios.kg}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                setForm((f) => ({
+                                  ...f,
+                                  tagPrecios: {
+                                    ...f.tagPrecios,
+                                    [tagId]: { ...(f.tagPrecios[tagId] ?? { bulto: '', pallet: '', kg: '', camion_completo: '' }), kg: val },
+                                  },
+                                }));
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-500 block mb-1">Camión compl. ($)</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="Ej: 50000"
+                              value={precios.camion_completo}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                setForm((f) => ({
+                                  ...f,
+                                  tagPrecios: {
+                                    ...f.tagPrecios,
+                                    [tagId]: { ...(f.tagPrecios[tagId] ?? { bulto: '', pallet: '', kg: '', camion_completo: '' }), camion_completo: val },
+                                  },
+                                }));
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <Separator />
