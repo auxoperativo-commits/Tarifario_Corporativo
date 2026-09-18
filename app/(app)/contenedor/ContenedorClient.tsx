@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { BriefcaseBusiness, Plus, Trash2, Loader2, Package, Truck, MapPinned } from 'lucide-react';
+import { BriefcaseBusiness, Plus, Trash2, Loader2, Package, Truck, MapPinned, Search } from 'lucide-react';
 
 function formatearRutaContenedor(
   provincia: string | null,
@@ -38,6 +38,7 @@ export function ContenedorClient({ contenedoresIniciales, cotizacionesIniciales 
   const [descripcionNuevo, setDescripcionNuevo] = useState('');
   const [creando, setCreando] = useState(false);
   const [eligeContenedorId, setEligeContenedorId] = useState<string>('');
+  const [busquedaNombre, setBusquedaNombre] = useState('');
 
   useEffect(() => {
     async function cargarTodo() {
@@ -194,7 +195,7 @@ export function ContenedorClient({ contenedoresIniciales, cotizacionesIniciales 
         </div>
 
         <div className="bg-white border rounded-xl p-4 space-y-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h3 className="font-semibold text-slate-800">Cotizaciones guardadas</h3>
             <select value={eligeContenedorId} onChange={(event) => setEligeContenedorId(event.target.value)} className="h-9 rounded-md border px-2 text-sm">
               <option value="">Todos</option>
@@ -204,40 +205,72 @@ export function ContenedorClient({ contenedoresIniciales, cotizacionesIniciales 
             </select>
           </div>
 
-          {cotizaciones.filter((item) => !eligeContenedorId || item.contenedor_id === eligeContenedorId).length === 0 ? (
-            <p className="text-sm text-muted-foreground">Todavía no agregaste cotizaciones a ningún contenedor.</p>
-          ) : (
-            <div className="space-y-3">
-              {cotizaciones.filter((item) => !eligeContenedorId || item.contenedor_id === eligeContenedorId).map((item) => {
-                const contenedor = contenedores.find((c) => c.id === item.contenedor_id);
-                return (
-                  <div key={item.id} className="rounded-lg border p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-slate-800">{contenedor?.nombre ?? 'Contenedor'}</div>
-                        <div className="text-xs text-muted-foreground">{item.transporte_nombre ?? 'Transporte'}</div>
+          {/* Búsqueda por nombre de cotización */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={busquedaNombre}
+              onChange={(event) => setBusquedaNombre(event.target.value)}
+              placeholder="Buscar por nombre de cotización..."
+              className="pl-9"
+            />
+          </div>
+
+          {(() => {
+            const textoBusqueda = busquedaNombre.trim().toLowerCase();
+            const cotizacionesFiltradas = cotizaciones.filter((item) => {
+              const pasaContenedor = !eligeContenedorId || item.contenedor_id === eligeContenedorId;
+              const pasaNombre = !textoBusqueda || (item.nombre ?? '').toLowerCase().includes(textoBusqueda);
+              return pasaContenedor && pasaNombre;
+            });
+
+            if (cotizacionesFiltradas.length === 0) {
+              return (
+                <p className="text-sm text-muted-foreground">
+                  {textoBusqueda
+                    ? 'No hay cotizaciones que coincidan con la búsqueda.'
+                    : 'Todavía no agregaste cotizaciones a ningún contenedor.'}
+                </p>
+              );
+            }
+
+            return (
+              <div className="space-y-3">
+                {cotizacionesFiltradas.map((item) => {
+                  const contenedor = contenedores.find((c) => c.id === item.contenedor_id);
+                  return (
+                    <div key={item.id} className="rounded-lg border p-3 space-y-2">
+                      {/* Nombre opcional de la cotización — se muestra como título si está cargado */}
+                      {item.nombre && (
+                        <p className="text-sm font-semibold text-slate-900">{item.nombre}</p>
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-800">{contenedor?.nombre ?? 'Contenedor'}</div>
+                          <div className="text-xs text-muted-foreground">{item.transporte_nombre ?? 'Transporte'}</div>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => eliminarCotizacion(item.id)} className="text-destructive hover:text-destructive">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => eliminarCotizacion(item.id)} className="text-destructive hover:text-destructive">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
 
-                    <div className="grid gap-2 sm:grid-cols-2 text-sm text-slate-600">
-                      <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{formatearRutaContenedor(item.origen_provincia, item.origen_localidad, item.origen_nombre_personalizado)}</div>
-                      <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{formatearRutaContenedor(item.destino_provincia, item.destino_localidad, item.destino_nombre_personalizado)}</div>
-                      <div className="flex items-center gap-2"><Package className="h-3.5 w-3.5 text-muted-foreground" />{item.cantidad_bultos || 0} bultos · {item.cantidad_pallets || 0} pallets</div>
-                      <div className="flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-muted-foreground" />{item.cantidad_kg || 0} kg</div>
-                    </div>
+                      <div className="grid gap-2 sm:grid-cols-2 text-sm text-slate-600">
+                        <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{formatearRutaContenedor(item.origen_provincia, item.origen_localidad, item.origen_nombre_personalizado)}</div>
+                        <div className="flex items-center gap-2"><MapPinned className="h-3.5 w-3.5 text-muted-foreground" />{formatearRutaContenedor(item.destino_provincia, item.destino_localidad, item.destino_nombre_personalizado)}</div>
+                        <div className="flex items-center gap-2"><Package className="h-3.5 w-3.5 text-muted-foreground" />{item.cantidad_bultos || 0} bultos · {item.cantidad_pallets || 0} pallets</div>
+                        <div className="flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-muted-foreground" />{item.cantidad_kg || 0} kg</div>
+                      </div>
 
-                    <div className="flex items-center justify-between gap-3 border-t pt-2">
-                      <span className="text-xs text-muted-foreground">Precio</span>
-                      <span className="text-lg font-bold text-slate-900">${Number(item.precio_total || 0).toLocaleString('es-AR')}</span>
+                      <div className="flex items-center justify-between gap-3 border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Precio</span>
+                        <span className="text-lg font-bold text-slate-900">${Number(item.precio_total || 0).toLocaleString('es-AR')}</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

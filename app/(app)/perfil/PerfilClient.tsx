@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
-import type { PerfilUsuario, UbicacionSeleccionada } from '@/lib/types/database';
+import type { PerfilUsuario, UbicacionSeleccionada, Sucursal } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,20 +33,29 @@ const ROL_COLORS: Record<string, string> = {
 interface PerfilClientProps {
   perfil: PerfilUsuario | null;
   email: string;
+  sucursales?: Sucursal[];
 }
 
-export function PerfilClient({ perfil, email }: PerfilClientProps) {
+export function PerfilClient({ perfil, email, sucursales = [] }: PerfilClientProps) {
   const { toast } = useToast();
   const supabase = createClient();
 
   const [nombre, setNombre] = useState(perfil?.nombre_completo ?? '');
+  const [origenSucursalId, setOrigenSucursalId] = useState<string | null>(perfil?.origen_predeterminado_sucursal_id ?? null);
   const [origen, setOrigen] = useState<UbicacionSeleccionada | null>(
-    perfil?.origen_predeterminado_provincia
-      ? {
-          provincia: perfil.origen_predeterminado_provincia,
-          localidad: perfil.origen_predeterminado_localidad ?? null,
-        }
-      : null
+    perfil?.origen_predeterminado_sucursal_id
+      ? (() => {
+          const sucursal = sucursales.find((item) => item.id === perfil.origen_predeterminado_sucursal_id);
+          return sucursal
+            ? { provincia: sucursal.provincia, localidad: sucursal.localidad, id: sucursal.id, nombre: sucursal.nombre, tipo: 'sucursal' }
+            : null;
+        })()
+      : perfil?.origen_predeterminado_provincia
+        ? {
+            provincia: perfil.origen_predeterminado_provincia,
+            localidad: perfil.origen_predeterminado_localidad ?? null,
+          }
+        : null
   );
   const [destino, setDestino] = useState<UbicacionSeleccionada | null>(
     perfil?.destino_predeterminado_provincia
@@ -83,8 +92,9 @@ export function PerfilClient({ perfil, email }: PerfilClientProps) {
     const { error } = await supabase
       .from('perfiles_usuario')
       .update({
-        origen_predeterminado_provincia: origen?.provincia ?? null,
-        origen_predeterminado_localidad: origen?.localidad ?? null,
+        origen_predeterminado_sucursal_id: origenSucursalId ?? null,
+        origen_predeterminado_provincia: origenSucursalId ? null : (origen?.provincia ?? null),
+        origen_predeterminado_localidad: origenSucursalId ? null : (origen?.localidad ?? null),
         destino_predeterminado_provincia: destino?.provincia ?? null,
         destino_predeterminado_localidad: destino?.localidad ?? null,
       })
@@ -187,13 +197,29 @@ export function PerfilClient({ perfil, email }: PerfilClientProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <GeorefCombobox
-            label="Origen predeterminado"
-            value={origen}
-            onChange={setOrigen}
-            placeholder="Seleccionar provincia..."
-            localidadOpcional
-          />
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Origen predeterminado</Label>
+            <select
+              value={origenSucursalId ?? ''}
+              onChange={(event) => {
+                const value = event.target.value || null;
+                setOrigenSucursalId(value);
+                if (!value) {
+                  setOrigen(null);
+                  return;
+                }
+                const sucursal = sucursales.find((item) => item.id === value);
+                setOrigen(sucursal ? { provincia: sucursal.provincia, localidad: sucursal.localidad, id: sucursal.id, nombre: sucursal.nombre, tipo: 'sucursal' } : null);
+              }}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">Sin sucursal predeterminada</option>
+              {sucursales.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>{sucursal.nombre} · {sucursal.provincia} · {sucursal.localidad}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">Si elegís una sucursal, se usará como origen fijo para el módulo de Envíos.</p>
+          </div>
 
           <GeorefCombobox
             label="Destino predeterminado"

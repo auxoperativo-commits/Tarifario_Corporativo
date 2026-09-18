@@ -30,15 +30,18 @@ export default async function UsuariosPage() {
     rol: 'operario' | 'admin';
     created_at: string;
   }[] = [];
+  let sucursalesIniciales: any[] = [];
   let errorAdministracion: string | null = null;
   try {
     const admin = createAdminClient();
-    const [{ data: usuarios, error: usuariosError }, { data: perfiles, error: perfilesError }] = await Promise.all([
+    const [{ data: usuarios, error: usuariosError }, { data: perfiles, error: perfilesError }, { data: sucursales, error: sucursalesError }] = await Promise.all([
       admin.auth.admin.listUsers({ perPage: 1000 }),
       admin.from('perfiles_usuario').select('id, nombre_completo, rol, created_at'),
+      admin.from('sucursales').select('*').order('nombre'),
     ]);
     if (usuariosError) throw usuariosError;
     if (perfilesError) throw perfilesError;
+    if (sucursalesError) throw sucursalesError;
   const perfilesPorId = new Map((perfiles ?? []).map((item) => [item.id, item]));
     usuariosIniciales = (usuarios?.users ?? []).map((item) => ({
     id: item.id,
@@ -47,6 +50,7 @@ export default async function UsuariosPage() {
     rol: (perfilesPorId.get(item.id)?.rol ?? 'operario') as 'operario' | 'admin',
     created_at: item.created_at,
   }));
+    sucursalesIniciales = sucursales ?? [];
   } catch (error) {
     errorAdministracion = error instanceof Error ? error.message : 'No se pudo cargar la administración de usuarios.';
   }
@@ -54,7 +58,11 @@ export default async function UsuariosPage() {
   return (
     <div>
       <PageHeader title="Usuarios" description="Creá y administrá las cuentas internas del sistema" />
-      <UsuariosClient usuariosIniciales={usuariosIniciales} errorAdministracion={errorAdministracion} />
+      <UsuariosClient
+        usuariosIniciales={usuariosIniciales}
+        sucursalesIniciales={sucursalesIniciales}
+        errorAdministracion={errorAdministracion}
+      />
     </div>
   );
 }

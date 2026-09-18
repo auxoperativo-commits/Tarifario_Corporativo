@@ -11,8 +11,8 @@ import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 import { parsearNumeroLocal } from '@/lib/numeros';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
-  Transporte, Tag, ConfiguracionEnvio,
-  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada,
+  Transporte, Tag, Caracteristica, ConfiguracionEnvio,
+  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search, Weight, Copy,
+  Plus, Pencil, Trash2, Settings, Clock, Package, Truck, Loader2, X, ChevronDown, ChevronUp, Upload, Search, Weight, Copy, Shapes,
 } from 'lucide-react';
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
@@ -50,16 +50,19 @@ interface ConfiguracionConRelaciones extends ConfiguracionEnvio {
   tarifas_kg?: TarifaKg[];
   configuracion_tags: { tag_id: string; configuracion_tag_precios?: TagPrecio[] }[];
   configuracion_tag_precios?: TagPrecio[];
+  configuracion_caracteristicas?: { caracteristica_id: string }[];
 }
 
 interface FormData {
   origen: UbicacionSeleccionada | null;
+  origenSucursalId: string | null;
   destino: UbicacionSeleccionada | null;
   tiempo_min: number | '';
   tiempo_max: number | '';
   precio_camion: number | string;
   activo: boolean;
   aptoPeritoneal: boolean;
+  modoPrecioPallet: 'precio_por_unidad' | 'precio_total_tramo';
   tramosBulto: TramoForm[];
   tramosPallet: TramoForm[];
   tramosKg: TramoForm[];
@@ -71,6 +74,7 @@ interface FormData {
     kg: number | string;
     camion_completo: number | string;
   }>;
+  caracteristicaIds: string[];
 }
 
 type EstadoActualizacion = 'vigente' | 'atencion' | 'desactualizado';
@@ -119,17 +123,20 @@ const COLORES_ACTUALIZACION: Record<EstadoActualizacion, string> = {
 
 const FORM_VACIO: FormData = {
   origen: null,
+  origenSucursalId: null,
   destino: null,
   tiempo_min: '',
   tiempo_max: '',
   precio_camion: '',
   activo: true,
   aptoPeritoneal: false,
+  modoPrecioPallet: 'precio_por_unidad',
   tramosBulto: [{ desde: 1, precio: '', esValorInicial: false }],
   tramosPallet: [{ desde: 1, precio: '' }],
   tramosKg: [{ desde: 1, precio: '' }],
   tagIds: [],
   tagPrecios: {},
+  caracteristicaIds: [],
 };
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -138,6 +145,8 @@ interface Props {
   transportes: Transporte[];
   transportesParaImportar: Transporte[];
   tagsIniciales: Tag[];
+  caracteristicasIniciales: Caracteristica[];
+  sucursales: Sucursal[];
   transportePreseleccionadoId: string | null;
   configuracionesIniciales: unknown[];
 }
@@ -145,7 +154,7 @@ interface Props {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export function ConfiguracionesClient({
-  transportes, transportesParaImportar, tagsIniciales, transportePreseleccionadoId, configuracionesIniciales,
+  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, sucursales, transportePreseleccionadoId, configuracionesIniciales,
 }: Props) {
   const { perfil } = useUser();
   const { toast } = useToast();
@@ -157,6 +166,7 @@ export function ConfiguracionesClient({
     configuracionesIniciales as ConfiguracionConRelaciones[]
   );
   const [tags, setTags] = useState<Tag[]>(tagsIniciales);
+  const [caracteristicas, setCaracteristicas] = useState<Caracteristica[]>(caracteristicasIniciales);
   const [loading, setLoading] = useState(false);
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
 
@@ -191,7 +201,7 @@ export function ConfiguracionesClient({
     setLoading(true);
     const { data, error } = await supabase
       .from('configuraciones_envio')
-      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id), configuracion_tag_precios(*)`)
+      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id), configuracion_tag_precios(*), configuracion_caracteristicas(caracteristica_id)`)
       .eq('transporte_id', tid)
       .order('created_at', { ascending: false });
     if (error) toast({ variant: 'destructive', title: 'Error al cargar configuraciones.' });
@@ -237,10 +247,11 @@ export function ConfiguracionesClient({
       origen: {
         provincia: c.origen_provincia,
         localidad: c.origen_localidad ?? null,
-        id: c.origen_ubicacion_personalizada_id ?? undefined,
+        id: c.origen_ubicacion_personalizada_id ?? c.origen_sucursal_id ?? undefined,
         nombre: c.origen_nombre_personalizado ?? undefined,
-        tipo: c.origen_ubicacion_personalizada_id ? 'personalizada' : 'georef',
+        tipo: c.origen_ubicacion_personalizada_id ? 'personalizada' : c.origen_sucursal_id ? 'sucursal' : 'georef',
       },
+      origenSucursalId: c.origen_sucursal_id ?? null,
       destino: {
         provincia: c.destino_provincia,
         localidad: c.destino_localidad ?? null,
@@ -253,6 +264,7 @@ export function ConfiguracionesClient({
       precio_camion: c.precio_camion_completo ?? '',
       activo: c.activo,
       aptoPeritoneal: c.apto_peritoneal ?? false,
+      modoPrecioPallet: c.modo_precio_pallet ?? 'precio_por_unidad',
       tramosBulto: toTramosBulto(c.tarifas_bulto),
       tramosPallet: toTramosPallet(c.tarifas_pallet ?? []),
       tramosKg: toTramosKg(c.tarifas_kg ?? []),
@@ -272,6 +284,7 @@ export function ConfiguracionesClient({
           },
         ])
       ),
+      caracteristicaIds: (c.configuracion_caracteristicas ?? []).map((cc) => cc.caracteristica_id),
     });
     setEditandoId(c.id);
     setDialogOpen(true);
@@ -330,9 +343,22 @@ export function ConfiguracionesClient({
     setNuevaTagNombre('');
   }
 
+  // ── Características ───────────────────────────────────────────────────────
+  function toggleCaracteristica(id: string) {
+    setForm((f) => {
+      const seleccionada = f.caracteristicaIds.includes(id);
+      return {
+        ...f,
+        caracteristicaIds: seleccionada
+          ? f.caracteristicaIds.filter((x) => x !== id)
+          : [...f.caracteristicaIds, id],
+      };
+    });
+  }
+
   // ── Validar ───────────────────────────────────────────────────────────────
   function validar(): string | null {
-    if (!form.origen?.provincia) return 'Seleccioná el origen.';
+    if (!form.origenSucursalId && !form.origen?.provincia) return 'Seleccioná el origen.';
     if (!form.destino?.provincia) return 'Seleccioná el destino.';
     if (form.tiempo_min === '' || form.tiempo_max === '') return 'El tiempo estimado mínimo y máximo son obligatorios.';
     if (Number(form.tiempo_min) < 0 || Number(form.tiempo_max) < 0) return 'El tiempo estimado no puede ser negativo.';
@@ -364,10 +390,14 @@ export function ConfiguracionesClient({
     setSaving(true);
     try {
       const fechaActualizacion = new Date().toISOString();
+      const sucursalSeleccionada = sucursales.find((sucursal) => sucursal.id === form.origenSucursalId) ?? null;
+      const origenProvincia = sucursalSeleccionada?.provincia ?? form.origen?.provincia ?? '';
+      const origenLocalidad = sucursalSeleccionada?.localidad ?? form.origen?.localidad ?? null;
       const payload = {
         transporte_id: transporteId,
-        origen_provincia: form.origen!.provincia,
-        origen_localidad: form.origen!.localidad ?? null,
+        origen_sucursal_id: form.origenSucursalId ?? null,
+        origen_provincia: origenProvincia,
+        origen_localidad: origenLocalidad,
         origen_nombre_personalizado: form.origen?.tipo === 'personalizada' ? form.origen.nombre ?? form.origen.provincia : null,
         origen_ubicacion_personalizada_id: form.origen?.tipo === 'personalizada' ? form.origen.id ?? null : null,
         destino_provincia: form.destino!.provincia,
@@ -379,6 +409,7 @@ export function ConfiguracionesClient({
         precio_pallet: null,
         precio_camion_completo: form.precio_camion !== '' ? parsearNumeroLocal(form.precio_camion) : null,
         precio_camion_actualizado_at: form.precio_camion !== '' ? fechaActualizacion : null,
+        modo_precio_pallet: form.modoPrecioPallet,
         apto_peritoneal: form.aptoPeritoneal,
         activo: form.activo,
         es_copia: false,
@@ -486,6 +517,18 @@ export function ConfiguracionesClient({
             console.warn('configuracion_tag_precios no encontrada. Ejecutar supabase/migrations/07_tag_precios.sql');
           }
         }
+      }
+
+      // características de transporte (delete-then-insert, sin precios)
+      try {
+        await supabase.from('configuracion_caracteristicas').delete().eq('configuracion_id', configId);
+        if (form.caracteristicaIds.length > 0) {
+          await supabase.from('configuracion_caracteristicas').insert(
+            form.caracteristicaIds.map((caracteristica_id) => ({ configuracion_id: configId, caracteristica_id }))
+          );
+        }
+      } catch {
+        console.warn('configuracion_caracteristicas no encontrada. Ejecutar supabase/migrations/12_caracteristicas_transporte.sql');
       }
 
       toast({ title: editandoId ? 'Configuración actualizada.' : 'Configuración creada.' });
@@ -627,9 +670,18 @@ export function ConfiguracionesClient({
             <p className="text-xs text-muted-foreground">Usá rutas personalizadas para destinos no georreferenciados.</p>
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-[1.2fr_1fr_1fr_auto]">
+        <div className="grid gap-3 md:grid-cols-[1.2fr_1.5fr_1fr_auto]">
           <Input value={nuevaUbicacion.nombre} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, nombre: event.target.value }))} placeholder="Nombre de la ubicación" />
-          <Input value={nuevaUbicacion.provincia} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, provincia: event.target.value }))} placeholder="Provincia" />
+          <div className="min-w-0">
+            <GeorefCombobox
+              label="Provincia"
+              value={nuevaUbicacion.provincia ? { provincia: nuevaUbicacion.provincia, localidad: nuevaUbicacion.localidad || null } : null}
+              onChange={(ubicacion) => setNuevaUbicacion((prev) => ({ ...prev, provincia: ubicacion?.provincia ?? '', localidad: ubicacion?.localidad ?? prev.localidad }))}
+              placeholder="Seleccionar provincia..."
+              localidadOpcional
+              className="space-y-1"
+            />
+          </div>
           <Input value={nuevaUbicacion.localidad} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, localidad: event.target.value }))} placeholder="Localidad (opcional)" />
           <div className="flex gap-2">
             <Button onClick={guardarUbicacionPersonalizada} disabled={guardandoUbicacion} variant="outline" className="flex-1">
@@ -700,12 +752,21 @@ export function ConfiguracionesClient({
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <span className="font-semibold text-slate-800 text-sm">
-                        {formatearRutaConNombre(
-                          { provincia: c.origen_provincia, localidad: c.origen_localidad ?? null, nombre: c.origen_nombre_personalizado ?? undefined },
-                          c.origen_provincia,
-                          c.origen_localidad ?? null,
-                          c.origen_nombre_personalizado
-                        )}
+                        {(() => {
+                          const sucursalOrigen = c.origen_sucursal_id
+                            ? sucursales.find((s) => s.id === c.origen_sucursal_id)
+                            : null;
+                          return formatearRutaConNombre(
+                            {
+                              provincia: c.origen_provincia,
+                              localidad: c.origen_localidad ?? null,
+                              nombre: sucursalOrigen?.nombre ?? c.origen_nombre_personalizado ?? undefined,
+                            },
+                            c.origen_provincia,
+                            c.origen_localidad ?? null,
+                            sucursalOrigen?.nombre ?? c.origen_nombre_personalizado,
+                          );
+                        })()}
                       </span>
                       <span className="text-muted-foreground">→</span>
                       <span className="font-semibold text-slate-800 text-sm">
@@ -753,6 +814,25 @@ export function ConfiguracionesClient({
                         ))}
                       </div>
                     )}
+                    {(() => {
+                      const caracsDeLaConfig = (c.configuracion_caracteristicas ?? [])
+                        .map((cc) => caracteristicas.find((car) => car.id === cc.caracteristica_id))
+                        .filter(Boolean) as Caracteristica[];
+                      if (!caracsDeLaConfig.length) return null;
+                      return (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {caracsDeLaConfig.map((car) => (
+                            <span
+                              key={car.id}
+                              className="rounded-full border px-2 py-0.5 text-xs font-medium"
+                              style={{ borderColor: car.color, color: car.color }}
+                            >
+                              {car.nombre}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button onClick={() => setExpandidas((p) => { const n = new Set(p); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
@@ -841,26 +921,34 @@ export function ConfiguracionesClient({
             {/* Origen / Destino */}
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <GeorefCombobox label="Origen" value={form.origen} onChange={(v) => setForm((f) => ({ ...f, origen: v }))} localidadOpcional />
-                {ubicacionesPersonalizadas.length > 0 && (
-                  <Select value="" onValueChange={(value) => {
-                    const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
-                    if (!ubicacion) return;
-                    setForm((f) => ({ ...f, origen: { provincia: ubicacion.provincia, localidad: ubicacion.localidad ?? null, nombre: ubicacion.nombre, tipo: 'personalizada' } }));
-                  }}>
-                    <SelectTrigger className="w-full h-9">
-                      <SelectValue placeholder="Usar ubicación personalizada como origen" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ubicacionesPersonalizadas.map((ubicacion) => (
-                        <SelectItem key={ubicacion.id} value={ubicacion.id}>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <Label className="text-sm font-medium">Origen</Label>
+                <Select value={form.origenSucursalId ?? ''} onValueChange={(value) => {
+                  const sucursal = sucursales.find((item) => item.id === value);
+                  setForm((f) => ({
+                    ...f,
+                    origenSucursalId: sucursal ? sucursal.id : null,
+                    origen: sucursal
+                      ? { provincia: sucursal.provincia, localidad: sucursal.localidad, nombre: sucursal.nombre, tipo: 'sucursal', id: sucursal.id }
+                      : null,
+                  }));
+                }}>
+                  <SelectTrigger className="w-full h-9">
+                    <SelectValue placeholder="Seleccionar sucursal de origen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sucursales.map((sucursal) => (
+                      <SelectItem key={sucursal.id} value={sucursal.id}>{sucursal.nombre} · {sucursal.provincia} · {sucursal.localidad}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {form.origenSucursalId && (
+                  <p className="text-xs text-muted-foreground">
+                    {sucursales.find((sucursal) => sucursal.id === form.origenSucursalId)?.nombre ?? 'Sucursal'}
+                  </p>
                 )}
               </div>
               <div className="space-y-2">
-                <GeorefCombobox label="Destino" value={form.destino} onChange={(v) => setForm((f) => ({ ...f, destino: v }))} localidadOpcional />
+                <GeorefCombobox label="Destino" value={form.destino} onChange={(v) => setForm((f) => ({ ...f, destino: v }))} localidadOpcional personalizadas={ubicacionesPersonalizadas} />
                 {ubicacionesPersonalizadas.length > 0 && (
                   <Select value="" onValueChange={(value) => {
                     const ubicacion = ubicacionesPersonalizadas.find((item) => item.id === value);
@@ -966,17 +1054,32 @@ export function ConfiguracionesClient({
             <Separator />
 
             {/* Tramos pallet */}
-            <TramoSection
-              label="Precio por pallet (tramos)"
-              icon={<span className="text-xs font-bold bg-slate-200 text-slate-600 rounded px-1">P</span>}
-              tramos={form.tramosPallet}
-              unidad="pallet"
-              paso={0.5}
-              onAdd={() => addTramo('tramosPallet')}
-              onUpdate={(i, k, v) => updTramo('tramosPallet', i, k, v)}
-              onDelete={(i) => delTramo('tramosPallet', i)}
-              hint="Soporta medios pallets (0.5). Ej: desde 1 → $90.000, desde 2 → $70.000."
-            />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <Label className="flex items-center gap-1.5"><span className="text-xs font-bold bg-slate-200 text-slate-600 rounded px-1">P</span>Precio por pallet (tramos)</Label>
+                <div className="flex items-center gap-2 rounded-md border bg-slate-50 px-2 py-1.5">
+                  <Label htmlFor="modo-precio-pallet" className="text-xs text-muted-foreground">Precio x Cantidad Total</Label>
+                  <Switch
+                    id="modo-precio-pallet"
+                    checked={form.modoPrecioPallet === 'precio_total_tramo'}
+                    onCheckedChange={(checked) => setForm((f) => ({ ...f, modoPrecioPallet: checked ? 'precio_total_tramo' : 'precio_por_unidad' }))}
+                  />
+                </div>
+              </div>
+              <TramoSection
+                label=""
+                icon={null}
+                tramos={form.tramosPallet}
+                unidad="pallet"
+                paso={0.5}
+                onAdd={() => addTramo('tramosPallet')}
+                onUpdate={(i, k, v) => updTramo('tramosPallet', i, k, v)}
+                onDelete={(i) => delTramo('tramosPallet', i)}
+                hint={form.modoPrecioPallet === 'precio_total_tramo'
+                  ? 'En este modo, el precio del tramo se usa tal cual como total para esa cantidad de pallets.'
+                  : 'En este modo, el precio del tramo se multiplica por la cantidad de pallets pedidas.'}
+              />
+            </div>
 
             <Separator />
 
@@ -1130,6 +1233,44 @@ export function ConfiguracionesClient({
                           </div>
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Características de Transporte */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Shapes className="h-3.5 w-3.5 text-teal-600" />
+                <Label>Características de Transporte</Label>
+                <span className="text-xs text-muted-foreground font-normal">(sin costo — solo para filtrar)</span>
+              </div>
+              {caracteristicas.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No hay características definidas. Creá algunas en el módulo Tags.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {caracteristicas.map((car) => {
+                    const sel = form.caracteristicaIds.includes(car.id);
+                    return (
+                      <button
+                        key={car.id}
+                        type="button"
+                        onClick={() => toggleCaracteristica(car.id)}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all border-2 ${
+                          sel ? 'text-white' : 'bg-white'
+                        }`}
+                        style={
+                          sel
+                            ? { backgroundColor: car.color, borderColor: car.color }
+                            : { borderColor: car.color, color: car.color }
+                        }
+                        aria-pressed={sel}
+                      >
+                        {sel && <span>✓</span>}{car.nombre}
+                      </button>
                     );
                   })}
                 </div>

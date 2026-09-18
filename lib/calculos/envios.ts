@@ -2,6 +2,7 @@ import type {
   ConfiguracionEnvio,
   Transporte,
   Tag,
+  Caracteristica,
   TagPrecio,
   TarifaBulto,
   TarifaPallet,
@@ -25,6 +26,9 @@ export interface ConfiguracionConDatos extends ConfiguracionEnvio {
   configuracion_tag_precios?: TagPrecio[];
   // También puede venir aplanado directamente
   tags?: Tag[];
+  // Características de transporte (sin costo, solo para filtrar/mostrar)
+  configuracion_caracteristicas?: Array<{ caracteristica_id: string; caracteristicas_transporte?: Caracteristica | null }>;
+  caracteristicas?: Caracteristica[];
 }
 
 /** Compara nombres de Georef y datos importados sin diferencias de tildes o mayúsculas. */
@@ -50,6 +54,19 @@ export function extraerTags(config: ConfiguracionConDatos): Tag[] {
   return [];
 }
 
+/** Extrae las características de transporte de una configuración independientemente de cómo vengan */
+export function extraerCaracteristicas(config: ConfiguracionConDatos): Caracteristica[] {
+  // Si ya vienen aplanadas
+  if (config.caracteristicas && config.caracteristicas.length > 0) return config.caracteristicas;
+  // Si vienen anidadas en configuracion_caracteristicas[].caracteristicas_transporte
+  if (config.configuracion_caracteristicas) {
+    return config.configuracion_caracteristicas
+      .map((cc) => cc.caracteristicas_transporte)
+      .filter((c): c is Caracteristica => c !== null && c !== undefined);
+  }
+  return [];
+}
+
 export function formatearUbicacion(
   ubicacion: Partial<UbicacionSeleccionada> | null | undefined,
   fallbackProvincia?: string | null,
@@ -71,6 +88,7 @@ export function filtrarConfiguraciones(
 ): ConfiguracionConDatos[] {
   const { origen, destino, cantidadBultos, cantidadPallets, cantidadKg, camionCompleto } = busqueda;
   const activas = configuraciones.filter((c) => c.activo);
+  const origenEsSucursal = !!busqueda.origenSucursalId || (origen.tipo === 'sucursal' && !!origen.id);
 
   const coincideUbicacionPersonalizada = (
     seleccion: UbicacionSeleccionada | null,
@@ -88,12 +106,19 @@ export function filtrarConfiguraciones(
   };
 
   const matcheadoras = activas.filter((c) => {
-    const matchOrigen =
-      normalizarUbicacion(c.origen_provincia) === normalizarUbicacion(origen.provincia) &&
-      (origen.localidad === null ||
-        c.origen_localidad === null ||
-        normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad)) &&
-      coincideUbicacionPersonalizada(origen, c.origen_nombre_personalizado, c.origen_ubicacion_personalizada_id, 'origen');
+    const matchOrigen = origenEsSucursal
+      ? (c.origen_sucursal_id
+          ? (busqueda.origenSucursalId
+              ? c.origen_sucursal_id === busqueda.origenSucursalId
+              : c.origen_sucursal_id === origen.id)
+          : false)
+      : (
+          normalizarUbicacion(c.origen_provincia) === normalizarUbicacion(origen.provincia) &&
+          (origen.localidad === null ||
+            c.origen_localidad === null ||
+            normalizarUbicacion(c.origen_localidad) === normalizarUbicacion(origen.localidad)) &&
+          coincideUbicacionPersonalizada(origen, c.origen_nombre_personalizado, c.origen_ubicacion_personalizada_id, 'origen')
+        );
 
     const matchDestino =
       normalizarUbicacion(c.destino_provincia) === normalizarUbicacion(destino.provincia) &&
@@ -180,7 +205,7 @@ export function calcularPrecio(
 
   // Pallets
   if (busqueda.cantidadPallets > 0) {
-    const desglosePallets = calcularPallets(config.tarifas_pallet, busqueda.cantidadPallets);
+    const desglosePallets = calcularPallets(config.tarifas_pallet, busqueda.cantidadPallets, config.modo_precio_pallet);
     items.push(...desglosePallets.items);
     total += desglosePallets.total;
   }
@@ -364,7 +389,8 @@ function calcularKg(
 
 function calcularPallets(
   tarifas: TarifaPallet[],
-  cantidad: number
+  cantidad: number,
+  modoPrecioPallet: ConfiguracionEnvio['modo_precio_pallet'] = 'precio_por_unidad'
 ): DesglosePrecio {
   if (tarifas.length === 0) return { items: [], total: 0 };
 
@@ -379,10 +405,13 @@ function calcularPallets(
   if (!tramo) {
     // Si la cantidad es menor que el primer tramo, usar el primero
     const primero = tramosAsc[0];
-    const subtotal = primero.precio * cantidad;
+    const subtotal = modoPrecioPallet === 'precio_total_tramo' ? primero.precio : primero.precio * cantidad;
+    const descripcion = modoPrecioPallet === 'precio_total_tramo'
+      ? `${formatearCantidad(cantidad)} pallet${cantidad !== 1 ? 's' : ''} → tramo desde ${primero.desde_pallet}: ${formatearPrecio(primero.precio)} (precio total del tramo)`
+      : `${formatearCantidad(cantidad)} pallet${cantidad !== 1 ? 's' : ''} × ${formatearPrecio(primero.precio)} (tramo desde ${primero.desde_pallet})`;
     return {
       items: [{
-        descripcion: `${formatearCantidad(cantidad)} pallet${cantidad !== 1 ? 's' : ''} × ${formatearPrecio(primero.precio)}`,
+        descripcion,
         precio: primero.precio,
         cantidad,
         subtotal,
@@ -391,10 +420,14 @@ function calcularPallets(
     };
   }
 
-  const subtotal = tramo.precio * cantidad;
+  const subtotal = modoPrecioPallet === 'precio_total_tramo' ? tramo.precio : tramo.precio * cantidad;
+  const descripcion = modoPrecioPallet === 'precio_total_tramo'
+    ? `${formatearCantidad(cantidad)} pallet${cantidad !== 1 ? 's' : ''} → tramo ${tramo.desde_pallet} en adelante: ${formatearPrecio(tramo.precio)} (precio total del tramo)`
+    : `${formatearCantidad(cantidad)} pallet${cantidad !== 1 ? 's' : ''} × ${formatearPrecio(tramo.precio)} (tramo desde ${tramo.desde_pallet})`;
+
   return {
     items: [{
-      descripcion: `${formatearCantidad(cantidad)} pallet${cantidad !== 1 ? 's' : ''} × ${formatearPrecio(tramo.precio)} (tramo desde ${tramo.desde_pallet})`,
+      descripcion,
       precio: tramo.precio,
       cantidad,
       subtotal,
@@ -440,6 +473,7 @@ export function calcularRanking(
         configuracion: c.config,
         transporte: c.config.transportes,
         tags: extraerTags(c.config),
+        caracteristicas: extraerCaracteristicas(c.config),
         precioTotal: c.desglose.total,
         tiempoMin: c.config.tiempo_estimado_min_horas,
         tiempoMax: c.config.tiempo_estimado_max_horas,

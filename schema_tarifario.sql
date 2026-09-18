@@ -56,6 +56,7 @@ create table configuraciones_envio (
 
   -- precio fijo por pallet (incluye los bultos que se quieran dentro del pallet)
   precio_pallet numeric(12,2),
+  modo_precio_pallet text not null default 'precio_por_unidad' check (modo_precio_pallet in ('precio_por_unidad', 'precio_total_tramo')),
 
   -- precio fijo por camion completo
   precio_camion_completo numeric(12,2),

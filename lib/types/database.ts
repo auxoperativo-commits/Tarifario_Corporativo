@@ -26,6 +26,20 @@ export interface Tag {
   configuracion_tag_precios?: TagPrecio[];
 }
 
+/** Característica de transporte: atributo cualitativo sin costo (ej: "Rápido", "Limpio") */
+export interface Caracteristica {
+  id: string;
+  nombre: string;
+  color: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ConfiguracionCaracteristica {
+  configuracion_id: string;
+  caracteristica_id: string;
+}
+
 /** Precio adicional de un tag dentro de una configuración de envío específica */
 export interface TagPrecio {
   id: string;
@@ -48,6 +62,7 @@ export interface TagCantidad {
 export interface ConfiguracionEnvio {
   id: string;
   transporte_id: string;
+  origen_sucursal_id?: string | null;
   origen_provincia: string;
   origen_localidad: string | null;
   origen_nombre_personalizado?: string | null;
@@ -59,6 +74,7 @@ export interface ConfiguracionEnvio {
   tiempo_estimado_min_horas: number | null;
   tiempo_estimado_max_horas: number | null;
   precio_pallet: number | null;
+  modo_precio_pallet?: 'precio_por_unidad' | 'precio_total_tramo' | null;
   precio_camion_completo: number | null;
   precio_camion_actualizado_at?: string | null;
   apto_peritoneal: boolean;
@@ -108,6 +124,7 @@ export interface PerfilUsuario {
   rol: Rol;
   origen_predeterminado_provincia: string | null;
   origen_predeterminado_localidad: string | null;
+  origen_predeterminado_sucursal_id?: string | null;
   destino_predeterminado_provincia: string | null;
   destino_predeterminado_localidad: string | null;
   created_at: string;
@@ -136,6 +153,17 @@ export interface UbicacionPersonalizada {
   created_at: string;
 }
 
+export interface Sucursal {
+  id: string;
+  nombre: string;
+  provincia: string;
+  localidad: string;
+  direccion: string | null;
+  activa: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Contenedor {
   id: string;
   usuario_id: string;
@@ -161,6 +189,7 @@ export interface ContenedorCotizacion {
   cantidad_bultos: number | null;
   cantidad_pallets: number | null;
   cantidad_kg: number | null;
+  nombre?: string | null;
   descripcion: string | null;
   created_at: string;
 }
@@ -183,7 +212,7 @@ export interface UbicacionSeleccionada {
   localidadId?: string;
   id?: string;
   nombre?: string;
-  tipo?: 'georef' | 'personalizada';
+  tipo?: 'georef' | 'personalizada' | 'sucursal';
 }
 
 // ── Resultados de búsqueda ─────────────────────────────────────────────────────
@@ -191,6 +220,7 @@ export interface UbicacionSeleccionada {
 // Lo que el usuario ingresa en el formulario de búsqueda
 export interface BusquedaEnvio {
   origen: UbicacionSeleccionada;
+  origenSucursalId?: string;
   destino: UbicacionSeleccionada;
   cantidadBultos: number;   // 0 = no aplica
   cantidadPallets: number;  // 0 = no aplica
@@ -205,6 +235,7 @@ export interface ResultadoEnvio {
   configuracion: ConfiguracionEnvio;
   transporte: Transporte;
   tags: Tag[];
+  caracteristicas: Caracteristica[];
   precioTotal: number;
   tiempoMin: number | null;
   tiempoMax: number | null;

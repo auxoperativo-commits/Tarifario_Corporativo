@@ -2,6 +2,7 @@ import { PerfilClient } from './PerfilClient';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { redirect } from 'next/navigation';
 import { getCurrentUserProfile } from '@/lib/auth/current-user';
+import { createClient } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Mi Perfil — Tarifario' };
 
@@ -9,6 +10,13 @@ export default async function PerfilPage() {
   const { user, perfil } = await getCurrentUserProfile();
 
   if (!user) redirect('/login');
+
+  const supabase = await createClient();
+  const { data: sucursales } = await supabase
+    .from('sucursales')
+    .select('*')
+    .eq('activa', true)
+    .order('nombre');
 
   return (
     <div>
@@ -19,6 +27,7 @@ export default async function PerfilPage() {
       <PerfilClient
         perfil={perfil}
         email={user.email ?? ''}
+        sucursales={sucursales ?? []}
       />
     </div>
   );

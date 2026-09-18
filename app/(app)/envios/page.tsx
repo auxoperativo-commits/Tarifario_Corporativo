@@ -9,14 +9,16 @@ export default async function EnviosPage() {
   const supabase = await createClient();
 
   // Cargamos todo lo necesario para el cálculo en el servidor
-  const [{ data: configuraciones }, { data: tags }, { perfil }] = await Promise.all([
+  const [{ data: configuraciones }, { data: tags }, { data: sucursales }, { data: caracteristicas }, { perfil }] = await Promise.all([
     supabase
       .from('configuraciones_envio')
       .select(
-        `*, transportes(*), tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id, tags(*)), configuracion_tag_precios(*)`
+        `*, transportes(*), tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id, tags(*)), configuracion_tag_precios(*), configuracion_caracteristicas(caracteristica_id, caracteristicas_transporte(*))`
       )
       .eq('activo', true),
     supabase.from('tags').select('*').order('nombre'),
+    supabase.from('sucursales').select('*').eq('activa', true).order('nombre'),
+    supabase.from('caracteristicas_transporte').select('*').order('nombre'),
     getCurrentUserProfile(),
   ]);
 
@@ -29,6 +31,8 @@ export default async function EnviosPage() {
       <EnviosClient
         configuracionesRaw={configuraciones ?? []}
         tagsDisponibles={tags ?? []}
+        caracteristicasDisponibles={(caracteristicas ?? []) as import('@/lib/types/database').Caracteristica[]}
+        sucursales={sucursales ?? []}
         perfilDefaults={perfil}
       />
     </div>

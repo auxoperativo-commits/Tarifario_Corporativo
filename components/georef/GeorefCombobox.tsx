@@ -274,6 +274,12 @@ interface GeorefComboboxProps {
   localidadOpcional?: boolean;
   disabled?: boolean;
   className?: string;
+  personalizadas?: Array<{
+    id: string;
+    nombre: string;
+    provincia: string;
+    localidad: string | null;
+  }>;
 }
 
 export function GeorefCombobox({
@@ -284,6 +290,7 @@ export function GeorefCombobox({
   localidadOpcional = false,
   disabled = false,
   className,
+  personalizadas = [],
 }: GeorefComboboxProps) {
   // ── Provincia ──
   const [busquedaProv, setBusquedaProv] = useState('');
@@ -364,8 +371,28 @@ export function GeorefCombobox({
     setBusquedaLoc('');
   }, [value, onChange]);
 
-  const provinciasItems = provincias.map((p) => ({ id: p.id, label: p.nombre }));
+  const customProvItems = (personalizadas ?? [])
+    .filter((item) => {
+      const q = busquedaProv.trim();
+      if (!q) return true;
+      const hayCoincidencia =
+        item.provincia.toLowerCase().includes(q.toLowerCase()) ||
+        item.nombre.toLowerCase().includes(q.toLowerCase());
+      return hayCoincidencia;
+    })
+    .map((item) => ({
+      id: item.id,
+      label: `${item.provincia} (${item.nombre})`,
+    }));
+
+  const provinciasItems = [
+    ...provincias.map((p) => ({ id: p.id, label: p.nombre })),
+    ...customProvItems,
+  ];
   const localidadesItems = localidades.map((l) => ({ id: l.id, label: l.nombre }));
+  const valorVisible = value?.tipo === 'personalizada' && value.nombre
+    ? `${value.provincia} (${value.nombre})`
+    : value?.provincia ?? '';
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -377,16 +404,51 @@ export function GeorefCombobox({
       {/* Provincia */}
       <Dropdown
         placeholder={placeholder}
-        value={value?.provincia ?? ''}
+        value={valorVisible}
         inputValue={busquedaProv}
         onInputChange={setBusquedaProv}
-        onSelect={seleccionarProvincia}
+        onSelect={(nombre) => {
+          const custom = (personalizadas ?? []).find(
+            (item) => `${item.provincia} (${item.nombre})` === nombre
+          );
+          if (custom) {
+            onChange({
+              provincia: custom.provincia,
+              localidad: custom.localidad ?? null,
+              id: custom.id,
+              nombre: custom.nombre,
+              tipo: 'personalizada',
+            });
+            setBusquedaProv('');
+            setBusquedaLoc('');
+            setLocalidades([]);
+            return;
+          }
+          seleccionarProvincia(nombre);
+        }}
         onClear={limpiarProvincia}
         items={provinciasItems}
         loading={loadingProv && !provCargadas}
         emptyText="No se encontraron provincias."
         disabled={disabled}
       />
+
+      {value?.tipo === 'personalizada' && value.nombre && (
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs text-primary">
+          <span className="flex items-center gap-1">
+            <MapPin className="h-3 w-3" />
+            {value.nombre}
+          </span>
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="rounded-full p-0.5 text-primary hover:bg-primary/10"
+            aria-label="Quitar ubicación personalizada"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
 
       {/* Localidad — solo aparece si hay provincia seleccionada */}
       {value?.provincia && (
