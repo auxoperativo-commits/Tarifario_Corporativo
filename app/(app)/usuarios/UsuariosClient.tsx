@@ -5,7 +5,7 @@ import { crearUsuario } from '@/app/actions/usuarios';
 import { useToast } from '@/hooks/use-toast';
 import { GeorefCombobox } from '@/components/georef/GeorefCombobox';
 import { createClient } from '@/lib/supabase/client';
-import type { Sucursal, UbicacionSeleccionada } from '@/lib/types/database';
+import type { Sucursal, UbicacionSeleccionada, GrupoSucursales, GrupoSucursalesMiembros } from '@/lib/types/database';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,13 +27,35 @@ interface SucursalForm {
   origen: UbicacionSeleccionada | null;
 }
 
+interface GrupoForm {
+  nombre: string;
+  sucursalIds: string[];
+}
+
 const FORMULARIO_SUCURSAL_VACIO: SucursalForm = {
   nombre: '',
   direccion: '',
   origen: null,
 };
 
-export function UsuariosClient({ usuariosIniciales, sucursalesIniciales, errorAdministracion }: { usuariosIniciales: UsuarioResumen[]; sucursalesIniciales: Sucursal[]; errorAdministracion: string | null }) {
+const FORMULARIO_GRUPO_VACIO: GrupoForm = {
+  nombre: '',
+  sucursalIds: [],
+};
+
+export function UsuariosClient({
+  usuariosIniciales,
+  sucursalesIniciales,
+  gruposIniciales,
+  gruposMiembrosIniciales,
+  errorAdministracion,
+}: {
+  usuariosIniciales: UsuarioResumen[];
+  sucursalesIniciales: Sucursal[];
+  gruposIniciales: GrupoSucursales[];
+  gruposMiembrosIniciales: GrupoSucursalesMiembros[];
+  errorAdministracion: string | null;
+}) {
   const { toast } = useToast();
   const supabase = createClient();
   const [usuarios, setUsuarios] = useState(usuariosIniciales);
@@ -46,6 +68,11 @@ export function UsuariosClient({ usuariosIniciales, sucursalesIniciales, errorAd
   const [sucursalForm, setSucursalForm] = useState<SucursalForm>(FORMULARIO_SUCURSAL_VACIO);
   const [sucursalEditandoId, setSucursalEditandoId] = useState<string | null>(null);
   const [guardandoSucursal, setGuardandoSucursal] = useState(false);
+  const [grupos, setGrupos] = useState<GrupoSucursales[]>(gruposIniciales);
+  const [gruposMiembros, setGruposMiembros] = useState<GrupoSucursalesMiembros[]>(gruposMiembrosIniciales);
+  const [grupoForm, setGrupoForm] = useState<GrupoForm>(FORMULARIO_GRUPO_VACIO);
+  const [grupoEditandoId, setGrupoEditandoId] = useState<string | null>(null);
+  const [guardandoGrupo, setGuardandoGrupo] = useState(false);
 
   async function guardar() {
     setGuardando(true);
@@ -134,6 +161,106 @@ export function UsuariosClient({ usuariosIniciales, sucursalesIniciales, errorAd
     });
   }
 
+  function toggleSucursalEnGrupo(sucursalId: string) {
+    setGrupoForm((prev) => {
+      const yaExiste = prev.sucursalIds.includes(sucursalId);
+      return {
+        ...prev,
+        sucursalIds: yaExiste
+          ? prev.sucursalIds.filter((id) => id !== sucursalId)
+          : [...prev.sucursalIds, sucursalId],
+      };
+    });
+  }
+
+  async function guardarGrupo() {
+    if (!grupoForm.nombre.trim()) {
+      toast({ variant: 'destructive', title: 'Ingresá un nombre para el grupo.' });
+      return;
+    }
+
+    setGuardandoGrupo(true);
+    try {
+      const nombre = grupoForm.nombre.trim();
+      const sucursalIds = Array.from(new Set(grupoForm.sucursalIds));
+
+      let grupoId = grupoEditandoId;
+      let grupoActual: GrupoSucursales | null = null;
+
+      if (grupoEditandoId) {
+        const { data, error } = await supabase
+          .from('grupos_sucursales')
+          .update({ nombre })
+          .eq('id', grupoEditandoId)
+          .select()
+          .single();
+        if (error) throw error;
+        grupoActual = data;
+        grupoId = data.id;
+      } else {
+        const { data, error } = await supabase
+          .from('grupos_sucursales')
+          .insert({ nombre })
+          .select()
+          .single();
+        if (error) throw error;
+        grupoActual = data;
+        grupoId = data.id;
+      }
+
+      if (!grupoId) throw new Error('No se pudo identificar el grupo para guardar sus sucursales.');
+
+      await supabase.from('grupo_sucursales_miembros').delete().eq('grupo_id', grupoId);
+      if (sucursalIds.length > 0) {
+        const rows: GrupoSucursalesMiembros[] = sucursalIds.map((sucursal_id) => ({ grupo_id: grupoId, sucursal_id }));
+        const { error: errorMiembros } = await supabase.from('grupo_sucursales_miembros').insert(rows);
+        if (errorMiembros) throw errorMiembros;
+        setGruposMiembros((prev) => prev.filter((miembro) => miembro.grupo_id !== grupoId).concat(rows));
+      } else {
+        setGruposMiembros((prev) => prev.filter((miembro) => miembro.grupo_id !== grupoId));
+      }
+
+      if (grupoActual) {
+        setGrupos((prev) => {
+          const existente = prev.some((item) => item.id === grupoActual.id);
+          if (existente) return prev.map((item) => (item.id === grupoActual.id ? grupoActual : item));
+          return [...prev, grupoActual];
+        });
+      }
+
+      toast({ title: grupoEditandoId ? 'Grupo actualizado.' : 'Grupo creado.' });
+      setGrupoForm(FORMULARIO_GRUPO_VACIO);
+      setGrupoEditandoId(null);
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'No se pudo guardar el grupo.', description: error instanceof Error ? error.message : 'Error inesperado' });
+    } finally {
+      setGuardandoGrupo(false);
+    }
+  }
+
+  async function toggleGrupoActiva(grupo: GrupoSucursales) {
+    const { data, error } = await supabase
+      .from('grupos_sucursales')
+      .update({ activo: !grupo.activo })
+      .eq('id', grupo.id)
+      .select()
+      .single();
+
+    if (error) {
+      toast({ variant: 'destructive', title: 'No se pudo cambiar el estado del grupo.' });
+      return;
+    }
+
+    setGrupos((prev) => prev.map((item) => item.id === data.id ? data : item));
+    toast({ title: grupo.activo ? 'Grupo dado de baja.' : 'Grupo reactivado.' });
+  }
+
+  function editarGrupo(grupo: GrupoSucursales) {
+    setGrupoEditandoId(grupo.id);
+    const sucursalIds = gruposMiembros.filter((m) => m.grupo_id === grupo.id).map((m) => m.sucursal_id);
+    setGrupoForm({ nombre: grupo.nombre, sucursalIds });
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -214,6 +341,88 @@ export function UsuariosClient({ usuariosIniciales, sucursalesIniciales, errorAd
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4 text-primary" />Grupos de sucursales</CardTitle>
+            {grupoEditandoId && (
+              <Button variant="outline" size="sm" onClick={() => { setGrupoEditandoId(null); setGrupoForm(FORMULARIO_GRUPO_VACIO); }}>
+                Cancelar edición
+              </Button>
+            )}
+          </div>
+          <CardDescription>Unificá sucursales del mismo origen físico para reutilizar una sola configuración.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-[1.3fr_1.7fr]">
+            <div className="space-y-1.5">
+              <Label htmlFor="grupo-nombre">Nombre del grupo</Label>
+              <Input id="grupo-nombre" value={grupoForm.nombre} onChange={(event) => setGrupoForm((prev) => ({ ...prev, nombre: event.target.value }))} placeholder="Ej: Córdoba Centro" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Sucursales del grupo</Label>
+              <div className="grid max-h-40 gap-2 overflow-auto rounded-md border bg-slate-50 p-2">
+                {sucursales.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No hay sucursales disponibles.</p>
+                ) : (
+                  sucursales.map((sucursal) => (
+                    <label key={sucursal.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-white">
+                      <input
+                        type="checkbox"
+                        checked={grupoForm.sucursalIds.includes(sucursal.id)}
+                        onChange={() => toggleSucursalEnGrupo(sucursal.id)}
+                      />
+                      <span className="text-sm">{sucursal.nombre} · {sucursal.localidad}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={guardarGrupo} disabled={guardandoGrupo}>
+              {guardandoGrupo && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {grupoEditandoId ? 'Guardar cambios' : 'Crear grupo'}
+            </Button>
+          </div>
+
+          <div className="space-y-2 pt-2">
+            {grupos.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No hay grupos configurados.</p>
+            ) : (
+              grupos.map((grupo) => {
+                const miembros = gruposMiembros.filter((m) => m.grupo_id === grupo.id);
+                return (
+                  <div key={grupo.id} className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium">{grupo.nombre}</p>
+                        <Badge variant={grupo.activo ? 'default' : 'secondary'}>{grupo.activo ? 'Activo' : 'Inactivo'}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {miembros.length > 0
+                          ? `${miembros.length} sucursal${miembros.length > 1 ? 'es' : ''} asociada${miembros.length > 1 ? 's' : ''}`
+                          : 'Sin sucursales asociadas'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => editarGrupo(grupo)}>
+                        <Pencil className="mr-1 h-3.5 w-3.5" />Editar
+                      </Button>
+                      <Button variant={grupo.activo ? 'secondary' : 'default'} size="sm" onClick={() => toggleGrupoActiva(grupo)}>
+                        {grupo.activo ? <PowerOff className="mr-1 h-3.5 w-3.5" /> : <Power className="mr-1 h-3.5 w-3.5" />}
+                        {grupo.activo ? 'Dar de baja' : 'Reactivar'}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </CardContent>

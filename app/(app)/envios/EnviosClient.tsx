@@ -16,7 +16,7 @@ import {
   type ConfiguracionConDatos,
 } from '@/lib/calculos/envios';
 import type {
-  Tag, TagCantidad, Caracteristica, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio, UbicacionPersonalizada, Contenedor, Sucursal,
+  Tag, TagCantidad, ResultadoEnvio, UbicacionSeleccionada, BusquedaEnvio, UbicacionPersonalizada, Contenedor, Sucursal, GrupoSucursales, GrupoSucursalesMiembros, Caracteristica,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,7 @@ import { EmptyState } from '@/components/layout/EmptyState';
 import {
   Search, ArrowLeftRight, Package, Truck, Clock,
   Star, DollarSign, Loader2, Info, Minus, Plus,
-  X, BriefcaseBusiness, Weight, Shapes,
+  X, BriefcaseBusiness, Weight,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -56,8 +56,10 @@ interface PerfilDefaults {
 interface EnviosClientProps {
   configuracionesRaw: unknown[];
   tagsDisponibles: Tag[];
-  caracteristicasDisponibles: Caracteristica[];
+  caracteristicasDisponibles?: Caracteristica[];
   sucursales: Sucursal[];
+  gruposDisponibles?: GrupoSucursales[];
+  gruposMiembros?: GrupoSucursalesMiembros[];
   perfilDefaults: PerfilDefaults | null;
 }
 
@@ -114,7 +116,15 @@ function formatearUbicacionPersonalizada(
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristicasDisponibles, sucursales, perfilDefaults }: EnviosClientProps) {
+export function EnviosClient({
+  configuracionesRaw,
+  tagsDisponibles,
+  caracteristicasDisponibles = [],
+  sucursales,
+  gruposDisponibles = [],
+  gruposMiembros = [],
+  perfilDefaults,
+}: EnviosClientProps) {
   const { toast } = useToast();
   const { perfil } = useUser();
   const supabase = createClient();
@@ -156,7 +166,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
   const [buscando, setBuscando] = useState(false);
   const [orden, setOrden] = useState<OrdenCriterio>('recomendado');
   const [filtroTags, setFiltroTags] = useState<string[]>([]);
-  const [filtroCaracteristicas, setFiltroCaracteristicas] = useState<string[]>([]);
   const [tagCantidades, setTagCantidades] = useState<Record<string, TagCantidad>>({});
   const [ubicacionesPersonalizadas, setUbicacionesPersonalizadas] = useState<UbicacionPersonalizada[]>([]);
   const [contenedores, setContenedores] = useState<Contenedor[]>([]);
@@ -170,7 +179,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
     async function cargarDatosUsuario() {
       try {
         const [{ data: ubicaciones }, { data: contenedoresData }] = await Promise.all([
-          supabase.from('ubicaciones_personalizadas').select('*').eq('usuario_id', perfil.id).order('nombre'),
+          supabase.from('ubicaciones_personalizadas').select('*').order('nombre'),
           supabase.from('contenedores').select('*').eq('usuario_id', perfil.id).order('created_at', { ascending: false }),
         ]);
         setUbicacionesPersonalizadas((ubicaciones ?? []) as UbicacionPersonalizada[]);
@@ -203,7 +212,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
         resultados: ResultadoEnvio[] | null;
         orden: OrdenCriterio;
         filtroTags: string[];
-        filtroCaracteristicas?: string[];
         tagCantidades?: Record<string, TagCantidad>;
       };
 
@@ -221,7 +229,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
       setResultados(estado.resultados);
       setOrden(estado.orden);
       setFiltroTags(estado.filtroTags ?? []);
-      setFiltroCaracteristicas(estado.filtroCaracteristicas ?? []);
       if (estado.tagCantidades) setTagCantidades(estado.tagCantidades);
     } catch {
       sessionStorage.removeItem(ULTIMA_BUSQUEDA_KEY);
@@ -320,7 +327,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
         tagCantidades,
       };
       const configs = configuracionesRaw as ConfiguracionConDatos[];
-      const candidatos = filtrarConfiguraciones(configs, busqueda);
+      const candidatos = filtrarConfiguraciones(configs, busqueda, gruposMiembros);
       const conPrecios = candidatos.map((config) => ({
         config,
         desglose: calcularPrecio(config, busqueda),
@@ -349,7 +356,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
         resultados: nuevosResultados,
         orden: 'recomendado',
         filtroTags,
-        filtroCaracteristicas,
         tagCantidades,
       }));
     } catch {
@@ -357,20 +363,15 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
     } finally {
       setBuscando(false);
     }
-  }, [origen, origenSucursalId, destino, totalBultos, totalPallets, totalKg, totalCamionCompleto, incluyeBultos, cantBultosStr, incluyePallets, cantPallets, incluyeKg, cantKgStr, camionCompleto, soloPeritoneal, filtroTags, filtroCaracteristicas, tagCantidades, configuracionesRaw, toast]);
+  }, [origen, origenSucursalId, destino, totalBultos, totalPallets, totalKg, totalCamionCompleto, incluyeBultos, cantBultosStr, incluyePallets, cantPallets, incluyeKg, cantKgStr, camionCompleto, soloPeritoneal, filtroTags, tagCantidades, configuracionesRaw, gruposMiembros, toast]);
 
   // ── Ordenar / filtrar resultados ───────────────────────────────────────────
   const resultadosOrdenados = useMemo(() => {
     if (!resultados) return [];
     let filtrados = resultados;
     if (filtroTags.length > 0) {
-      filtrados = filtrados.filter((r) =>
+      filtrados = resultados.filter((r) =>
         filtroTags.every((id) => r.tags.some((t) => t.id === id))
-      );
-    }
-    if (filtroCaracteristicas.length > 0) {
-      filtrados = filtrados.filter((r) =>
-        filtroCaracteristicas.every((id) => r.caracteristicas.some((c) => c.id === id))
       );
     }
     if (orden === 'precio') return [...filtrados].sort((a, b) => a.precioTotal - b.precioTotal);
@@ -382,7 +383,7 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
       });
     }
     return filtrados;
-  }, [resultados, orden, filtroTags, filtroCaracteristicas]);
+  }, [resultados, orden, filtroTags]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -749,56 +750,6 @@ export function EnviosClient({ configuracionesRaw, tagsDisponibles, caracteristi
             </div>
           )}
 
-          {/* Características de Transporte — filtro post-búsqueda */}
-          {caracteristicasDisponibles.length > 0 && (
-            <div className="mt-4 border-t pt-4">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <Label className="text-sm font-medium flex items-center gap-1.5">
-                  <Shapes className="h-4 w-4 text-teal-600" />
-                  Características <span className="font-normal text-muted-foreground">(filtro sin costo)</span>
-                </Label>
-                {filtroCaracteristicas.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFiltroCaracteristicas([])}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    Quitar todos
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {caracteristicasDisponibles.map((car) => {
-                  const activo = filtroCaracteristicas.includes(car.id);
-                  return (
-                    <button
-                      key={car.id}
-                      type="button"
-                      onClick={() =>
-                        setFiltroCaracteristicas((prev) =>
-                          activo ? prev.filter((id) => id !== car.id) : [...prev, car.id]
-                        )
-                      }
-                      className="inline-flex items-center gap-1.5 rounded-full border-2 px-3 py-1 text-xs font-medium transition-colors"
-                      style={
-                        activo
-                          ? { backgroundColor: car.color, borderColor: car.color, color: 'white' }
-                          : { borderColor: car.color, color: car.color }
-                      }
-                    >
-                      {car.nombre}{activo && <X className="h-3 w-3" />}
-                    </button>
-                  );
-                })}
-              </div>
-              {filtroCaracteristicas.length > 0 && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  Solo se mostrarán resultados que tengan <strong>todas</strong> las características seleccionadas.
-                </p>
-              )}
-            </div>
-          )}
-
           {/* Resumen */}
           {(totalBultos > 0 || totalPallets > 0 || totalKg > 0 || totalCamionCompleto) && (
             <div className="mt-3 flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
@@ -938,7 +889,6 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
   const [contenedorDialogOpen, setContenedorDialogOpen] = useState(false);
   const [contenedorDestinoId, setContenedorDestinoId] = useState('');
   const [nuevoContenedorNombre, setNuevoContenedorNombre] = useState('');
-  const [nombreCotizacion, setNombreCotizacion] = useState('');
   const [guardandoContenedor, setGuardandoContenedor] = useState(false);
 
   useEffect(() => {
@@ -989,7 +939,6 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
         cantidad_bultos: resultado.cantidadBultos ?? 0,
         cantidad_pallets: resultado.cantidadPallets ?? 0,
         cantidad_kg: resultado.cantidadKg ?? 0,
-        nombre: nombreCotizacion.trim() || null,
         descripcion: `${transporte.nombre_fantasia || transporte.razon_social} · ${origenLabel} → ${destinoLabel}`,
       });
       if (error) throw error;
@@ -998,7 +947,6 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
       setContenedorDialogOpen(false);
       setContenedorDestinoId('');
       setNuevoContenedorNombre('');
-      setNombreCotizacion('');
     } catch {
       toast({ variant: 'destructive', title: 'No se pudo guardar la cotización.' });
     } finally {
@@ -1052,20 +1000,6 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
               ))}
             </div>
           )}
-          {resultado.caracteristicas.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-1">
-              {resultado.caracteristicas.map((car) => (
-                <span
-                  key={car.id}
-                  className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium"
-                  style={{ borderColor: car.color, color: car.color }}
-                >
-                  <Shapes className="h-3 w-3" />
-                  {car.nombre}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
         <div className="shrink-0 flex items-center gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={() => setContenedorDialogOpen(true)} className="shrink-0">
@@ -1100,16 +1034,6 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">
-                Nombre de la cotización <span className="font-normal text-muted-foreground">(opcional)</span>
-              </Label>
-              <Input
-                value={nombreCotizacion}
-                onChange={(event) => setNombreCotizacion(event.target.value)}
-                placeholder="Ej: Envío urgente licitación X"
-              />
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-medium">O crear uno nuevo</Label>

@@ -12,7 +12,7 @@ import { parsearNumeroLocal } from '@/lib/numeros';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
   Transporte, Tag, Caracteristica, ConfiguracionEnvio,
-  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal,
+  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal, GrupoSucursales,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -56,6 +56,8 @@ interface ConfiguracionConRelaciones extends ConfiguracionEnvio {
 interface FormData {
   origen: UbicacionSeleccionada | null;
   origenSucursalId: string | null;
+  origenGrupoId: string | null;
+  origenTipo: 'sucursal' | 'grupo' | 'georef';
   destino: UbicacionSeleccionada | null;
   tiempo_min: number | '';
   tiempo_max: number | '';
@@ -110,6 +112,12 @@ function formatearRutaConNombre(
   const nombre = ubicacion?.nombre ?? customNombre ?? null;
 
   if (!provincia) return 'Sin ubicación';
+
+  // Sucursales: mostrar solo "Nombre · Localidad" sin duplicar provincia
+  if (ubicacion?.tipo === 'sucursal' && nombre) {
+    return localidad ? `${nombre} · ${localidad}` : nombre;
+  }
+
   if (nombre) return `${provincia} (${nombre})${localidad ? ` · ${localidad}` : ''}`;
   if (provincia && localidad) return `${provincia} · ${localidad}`;
   return provincia;
@@ -124,6 +132,8 @@ const COLORES_ACTUALIZACION: Record<EstadoActualizacion, string> = {
 const FORM_VACIO: FormData = {
   origen: null,
   origenSucursalId: null,
+  origenGrupoId: null,
+  origenTipo: 'sucursal',
   destino: null,
   tiempo_min: '',
   tiempo_max: '',
@@ -147,6 +157,7 @@ interface Props {
   tagsIniciales: Tag[];
   caracteristicasIniciales: Caracteristica[];
   sucursales: Sucursal[];
+  grupos: GrupoSucursales[];
   transportePreseleccionadoId: string | null;
   configuracionesIniciales: unknown[];
 }
@@ -154,7 +165,7 @@ interface Props {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export function ConfiguracionesClient({
-  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, sucursales, transportePreseleccionadoId, configuracionesIniciales,
+  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, sucursales, grupos, transportePreseleccionadoId, configuracionesIniciales,
 }: Props) {
   const { perfil } = useUser();
   const { toast } = useToast();
@@ -187,7 +198,7 @@ export function ConfiguracionesClient({
   useEffect(() => {
     async function cargarUbicaciones() {
       try {
-        const { data } = await supabase.from('ubicaciones_personalizadas').select('*').eq('usuario_id', perfil.id).order('nombre');
+        const { data } = await supabase.from('ubicaciones_personalizadas').select('*').order('nombre');
         setUbicacionesPersonalizadas((data ?? []) as UbicacionPersonalizada[]);
       } catch {
         setUbicacionesPersonalizadas([]);
@@ -247,11 +258,13 @@ export function ConfiguracionesClient({
       origen: {
         provincia: c.origen_provincia,
         localidad: c.origen_localidad ?? null,
-        id: c.origen_ubicacion_personalizada_id ?? c.origen_sucursal_id ?? undefined,
-        nombre: c.origen_nombre_personalizado ?? undefined,
-        tipo: c.origen_ubicacion_personalizada_id ? 'personalizada' : c.origen_sucursal_id ? 'sucursal' : 'georef',
+        id: c.origen_ubicacion_personalizada_id ?? c.origen_sucursal_id ?? c.origen_grupo_id ?? undefined,
+        nombre: c.origen_nombre_personalizado ?? grupos.find((grupo) => grupo.id === c.origen_grupo_id)?.nombre ?? undefined,
+        tipo: c.origen_ubicacion_personalizada_id ? 'personalizada' : c.origen_sucursal_id ? 'sucursal' : c.origen_grupo_id ? 'grupo' : 'georef',
       },
       origenSucursalId: c.origen_sucursal_id ?? null,
+      origenGrupoId: c.origen_grupo_id ?? null,
+      origenTipo: c.origen_grupo_id ? 'grupo' : c.origen_sucursal_id ? 'sucursal' : 'georef',
       destino: {
         provincia: c.destino_provincia,
         localidad: c.destino_localidad ?? null,
@@ -358,7 +371,8 @@ export function ConfiguracionesClient({
 
   // ── Validar ───────────────────────────────────────────────────────────────
   function validar(): string | null {
-    if (!form.origenSucursalId && !form.origen?.provincia) return 'Seleccioná el origen.';
+    const origenSeleccionado = Boolean(form.origenSucursalId || form.origenGrupoId || form.origen?.provincia);
+    if (!origenSeleccionado) return 'Seleccioná el origen.';
     if (!form.destino?.provincia) return 'Seleccioná el destino.';
     if (form.tiempo_min === '' || form.tiempo_max === '') return 'El tiempo estimado mínimo y máximo son obligatorios.';
     if (Number(form.tiempo_min) < 0 || Number(form.tiempo_max) < 0) return 'El tiempo estimado no puede ser negativo.';
@@ -393,9 +407,12 @@ export function ConfiguracionesClient({
       const sucursalSeleccionada = sucursales.find((sucursal) => sucursal.id === form.origenSucursalId) ?? null;
       const origenProvincia = sucursalSeleccionada?.provincia ?? form.origen?.provincia ?? '';
       const origenLocalidad = sucursalSeleccionada?.localidad ?? form.origen?.localidad ?? null;
+      const origenSucursalSeleccionada = form.origenTipo === 'sucursal' ? form.origenSucursalId ?? null : null;
+      const origenGrupoSeleccionado = form.origenTipo === 'grupo' ? form.origenGrupoId ?? null : null;
       const payload = {
         transporte_id: transporteId,
-        origen_sucursal_id: form.origenSucursalId ?? null,
+        origen_sucursal_id: origenSucursalSeleccionada,
+        origen_grupo_id: origenGrupoSeleccionado,
         origen_provincia: origenProvincia,
         origen_localidad: origenLocalidad,
         origen_nombre_personalizado: form.origen?.tipo === 'personalizada' ? form.origen.nombre ?? form.origen.provincia : null,
@@ -699,14 +716,16 @@ export function ConfiguracionesClient({
             {ubicacionesPersonalizadas.map((ubicacion) => (
               <span key={ubicacion.id} className="inline-flex items-center gap-2 rounded-full border bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
                 <span>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</span>
-                <span className="flex items-center gap-1">
-                  <button type="button" onClick={() => editarUbicacionPersonalizada(ubicacion)} className="text-slate-500 hover:text-slate-700" aria-label={`Editar ${ubicacion.nombre}`}>
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                  <button type="button" onClick={() => eliminarUbicacionPersonalizada(ubicacion.id)} className="text-red-500 hover:text-red-700" aria-label={`Eliminar ${ubicacion.nombre}`}>
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </span>
+                {ubicacion.usuario_id === perfil.id && (
+                  <span className="flex items-center gap-1">
+                    <button type="button" onClick={() => editarUbicacionPersonalizada(ubicacion)} className="text-slate-500 hover:text-slate-700" aria-label={`Editar ${ubicacion.nombre}`}>
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button type="button" onClick={() => eliminarUbicacionPersonalizada(ubicacion.id)} className="text-red-500 hover:text-red-700" aria-label={`Eliminar ${ubicacion.nombre}`}>
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
               </span>
             ))}
           </div>
@@ -761,6 +780,7 @@ export function ConfiguracionesClient({
                               provincia: c.origen_provincia,
                               localidad: c.origen_localidad ?? null,
                               nombre: sucursalOrigen?.nombre ?? c.origen_nombre_personalizado ?? undefined,
+                              tipo: sucursalOrigen ? 'sucursal' : (c.origen_ubicacion_personalizada_id ? 'personalizada' : 'georef'),
                             },
                             c.origen_provincia,
                             c.origen_localidad ?? null,
@@ -922,29 +942,81 @@ export function ConfiguracionesClient({
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Origen</Label>
-                <Select value={form.origenSucursalId ?? ''} onValueChange={(value) => {
-                  const sucursal = sucursales.find((item) => item.id === value);
-                  setForm((f) => ({
-                    ...f,
-                    origenSucursalId: sucursal ? sucursal.id : null,
-                    origen: sucursal
-                      ? { provincia: sucursal.provincia, localidad: sucursal.localidad, nombre: sucursal.nombre, tipo: 'sucursal', id: sucursal.id }
-                      : null,
-                  }));
-                }}>
+                <Select value={form.origenTipo} onValueChange={(value) => setForm((f) => ({ ...f, origenTipo: value as 'sucursal' | 'grupo' | 'georef', origenSucursalId: value === 'sucursal' ? f.origenSucursalId : null, origenGrupoId: value === 'grupo' ? f.origenGrupoId : null }))}>
                   <SelectTrigger className="w-full h-9">
-                    <SelectValue placeholder="Seleccionar sucursal de origen" />
+                    <SelectValue placeholder="Tipo de origen" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sucursales.map((sucursal) => (
-                      <SelectItem key={sucursal.id} value={sucursal.id}>{sucursal.nombre} · {sucursal.provincia} · {sucursal.localidad}</SelectItem>
-                    ))}
+                    <SelectItem value="sucursal">Sucursal</SelectItem>
+                    <SelectItem value="grupo">Grupo de sucursales</SelectItem>
+                    <SelectItem value="georef">Georef</SelectItem>
                   </SelectContent>
                 </Select>
-                {form.origenSucursalId && (
-                  <p className="text-xs text-muted-foreground">
-                    {sucursales.find((sucursal) => sucursal.id === form.origenSucursalId)?.nombre ?? 'Sucursal'}
-                  </p>
+
+                {form.origenTipo === 'sucursal' && (
+                  <>
+                    <Select value={form.origenSucursalId ?? ''} onValueChange={(value) => {
+                      const sucursal = sucursales.find((item) => item.id === value);
+                      setForm((f) => ({
+                        ...f,
+                        origenSucursalId: sucursal ? sucursal.id : null,
+                        origen: sucursal
+                          ? { provincia: sucursal.provincia, localidad: sucursal.localidad, nombre: sucursal.nombre, tipo: 'sucursal', id: sucursal.id }
+                          : null,
+                      }));
+                    }}>
+                      <SelectTrigger className="w-full h-9">
+                        <SelectValue placeholder="Seleccionar sucursal de origen" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sucursales.map((sucursal) => (
+                          <SelectItem key={sucursal.id} value={sucursal.id}>{sucursal.nombre} · {sucursal.localidad}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {form.origenSucursalId && (
+                      <p className="text-xs text-muted-foreground">
+                        {sucursales.find((sucursal) => sucursal.id === form.origenSucursalId)?.nombre ?? 'Sucursal'}
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {form.origenTipo === 'grupo' && (
+                  <>
+                    <Select value={form.origenGrupoId ?? ''} onValueChange={(value) => {
+                      const grupo = grupos.find((item) => item.id === value);
+                      setForm((f) => ({
+                        ...f,
+                        origenGrupoId: grupo ? grupo.id : null,
+                        origen: grupo ? { provincia: f.origen?.provincia ?? '', localidad: f.origen?.localidad ?? null, nombre: grupo.nombre, tipo: 'grupo', id: grupo.id } : null,
+                      }));
+                    }}>
+                      <SelectTrigger className="w-full h-9">
+                        <SelectValue placeholder="Seleccionar grupo de sucursales" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {grupos.map((grupo) => (
+                          <SelectItem key={grupo.id} value={grupo.id}>{grupo.nombre}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {form.origenGrupoId && (
+                      <p className="text-xs text-muted-foreground">
+                        {grupos.find((grupo) => grupo.id === form.origenGrupoId)?.nombre ?? 'Grupo'}
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {form.origenTipo === 'georef' && (
+                  <GeorefCombobox
+                    label="Origen georef"
+                    value={form.origen}
+                    onChange={(ubicacion) => setForm((f) => ({ ...f, origen: ubicacion }))}
+                    placeholder="Seleccionar provincia..."
+                    localidadOpcional
+                  />
                 )}
               </div>
               <div className="space-y-2">

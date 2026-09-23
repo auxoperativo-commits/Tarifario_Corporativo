@@ -63,6 +63,7 @@ export interface ConfiguracionEnvio {
   id: string;
   transporte_id: string;
   origen_sucursal_id?: string | null;
+  origen_grupo_id?: string | null;
   origen_provincia: string;
   origen_localidad: string | null;
   origen_nombre_personalizado?: string | null;
@@ -164,6 +165,19 @@ export interface Sucursal {
   updated_at: string;
 }
 
+export interface GrupoSucursales {
+  id: string;
+  nombre: string;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GrupoSucursalesMiembros {
+  grupo_id: string;
+  sucursal_id: string;
+}
+
 export interface Contenedor {
   id: string;
   usuario_id: string;
@@ -212,7 +226,7 @@ export interface UbicacionSeleccionada {
   localidadId?: string;
   id?: string;
   nombre?: string;
-  tipo?: 'georef' | 'personalizada' | 'sucursal';
+  tipo?: 'georef' | 'personalizada' | 'sucursal' | 'grupo';
 }
 
 // ── Resultados de búsqueda ─────────────────────────────────────────────────────
@@ -221,6 +235,7 @@ export interface UbicacionSeleccionada {
 export interface BusquedaEnvio {
   origen: UbicacionSeleccionada;
   origenSucursalId?: string;
+  origenGrupoId?: string;
   destino: UbicacionSeleccionada;
   cantidadBultos: number;   // 0 = no aplica
   cantidadPallets: number;  // 0 = no aplica

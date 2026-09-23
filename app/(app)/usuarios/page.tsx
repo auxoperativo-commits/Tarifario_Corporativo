@@ -31,17 +31,23 @@ export default async function UsuariosPage() {
     created_at: string;
   }[] = [];
   let sucursalesIniciales: any[] = [];
+  let gruposIniciales: any[] = [];
+  let gruposMiembrosIniciales: any[] = [];
   let errorAdministracion: string | null = null;
   try {
     const admin = createAdminClient();
-    const [{ data: usuarios, error: usuariosError }, { data: perfiles, error: perfilesError }, { data: sucursales, error: sucursalesError }] = await Promise.all([
+    const [{ data: usuarios, error: usuariosError }, { data: perfiles, error: perfilesError }, { data: sucursales, error: sucursalesError }, { data: grupos, error: gruposError }, { data: miembros, error: miembrosError }] = await Promise.all([
       admin.auth.admin.listUsers({ perPage: 1000 }),
       admin.from('perfiles_usuario').select('id, nombre_completo, rol, created_at'),
       admin.from('sucursales').select('*').order('nombre'),
+      admin.from('grupos_sucursales').select('*').order('nombre'),
+      admin.from('grupo_sucursales_miembros').select('*'),
     ]);
     if (usuariosError) throw usuariosError;
     if (perfilesError) throw perfilesError;
     if (sucursalesError) throw sucursalesError;
+    if (gruposError) throw gruposError;
+    if (miembrosError) throw miembrosError;
   const perfilesPorId = new Map((perfiles ?? []).map((item) => [item.id, item]));
     usuariosIniciales = (usuarios?.users ?? []).map((item) => ({
     id: item.id,
@@ -51,6 +57,8 @@ export default async function UsuariosPage() {
     created_at: item.created_at,
   }));
     sucursalesIniciales = sucursales ?? [];
+    gruposIniciales = grupos ?? [];
+    gruposMiembrosIniciales = miembros ?? [];
   } catch (error) {
     errorAdministracion = error instanceof Error ? error.message : 'No se pudo cargar la administración de usuarios.';
   }
@@ -61,6 +69,8 @@ export default async function UsuariosPage() {
       <UsuariosClient
         usuariosIniciales={usuariosIniciales}
         sucursalesIniciales={sucursalesIniciales}
+        gruposIniciales={gruposIniciales}
+        gruposMiembrosIniciales={gruposMiembrosIniciales}
         errorAdministracion={errorAdministracion}
       />
     </div>

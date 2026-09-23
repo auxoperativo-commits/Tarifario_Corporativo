@@ -12,6 +12,7 @@ import type {
   DesgloseItem,
   UbicacionSeleccionada,
   BusquedaEnvio,
+  GrupoSucursalesMiembros,
 } from '@/lib/types/database';
 
 // ── Estructura interna con relaciones ─────────────────────────────────────────
@@ -84,11 +85,17 @@ export function formatearUbicacion(
 
 export function filtrarConfiguraciones(
   configuraciones: ConfiguracionConDatos[],
-  busqueda: BusquedaEnvio
+  busqueda: BusquedaEnvio,
+  gruposMiembros: GrupoSucursalesMiembros[] = []
 ): ConfiguracionConDatos[] {
   const { origen, destino, cantidadBultos, cantidadPallets, cantidadKg, camionCompleto } = busqueda;
   const activas = configuraciones.filter((c) => c.activo);
   const origenEsSucursal = !!busqueda.origenSucursalId || (origen.tipo === 'sucursal' && !!origen.id);
+  const gruposDelOrigen = new Set(
+    (gruposMiembros ?? [])
+      .filter((miembro) => miembro.sucursal_id === (busqueda.origenSucursalId ?? origen.id ?? null))
+      .map((miembro) => miembro.grupo_id)
+  );
 
   const coincideUbicacionPersonalizada = (
     seleccion: UbicacionSeleccionada | null,
@@ -107,11 +114,18 @@ export function filtrarConfiguraciones(
 
   const matcheadoras = activas.filter((c) => {
     const matchOrigen = origenEsSucursal
-      ? (c.origen_sucursal_id
-          ? (busqueda.origenSucursalId
-              ? c.origen_sucursal_id === busqueda.origenSucursalId
-              : c.origen_sucursal_id === origen.id)
-          : false)
+      ? (
+          (c.origen_sucursal_id
+            ? (busqueda.origenSucursalId
+                ? c.origen_sucursal_id === busqueda.origenSucursalId
+                : c.origen_sucursal_id === origen.id)
+            : false)
+          || (
+            !!c.origen_grupo_id &&
+            !!(busqueda.origenSucursalId ?? origen.id) &&
+            gruposDelOrigen.has(c.origen_grupo_id)
+          )
+        )
       : (
           normalizarUbicacion(c.origen_provincia) === normalizarUbicacion(origen.provincia) &&
           (origen.localidad === null ||

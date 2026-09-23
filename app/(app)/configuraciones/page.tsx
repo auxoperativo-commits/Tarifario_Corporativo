@@ -12,11 +12,12 @@ export default async function ConfiguracionesPage({
   const params = await searchParams;
   const supabase = await createClient();
 
-  const [{ data: todosLosTransportes }, { data: tags }, { data: sucursales }, { data: caracteristicas }] = await Promise.all([
+  const [{ data: todosLosTransportes }, { data: tags }, { data: sucursales }, { data: caracteristicas }, { data: grupos }] = await Promise.all([
     supabase.from('transportes').select('*').order('razon_social'),
     supabase.from('tags').select('*').order('nombre'),
     supabase.from('sucursales').select('*').eq('activa', true).order('nombre'),
     supabase.from('caracteristicas_transporte').select('*').order('nombre'),
+    supabase.from('grupos_sucursales').select('*').eq('activo', true).order('nombre'),
   ]);
   const transportes = (todosLosTransportes ?? []).filter((transporte) => transporte.activo);
 
@@ -43,6 +44,7 @@ export default async function ConfiguracionesPage({
         tagsIniciales={tags ?? []}
         caracteristicasIniciales={(caracteristicas ?? []) as import('@/lib/types/database').Caracteristica[]}
         sucursales={sucursales ?? []}
+        grupos={(grupos ?? []) as import('@/lib/types/database').GrupoSucursales[]}
         transportePreseleccionadoId={params.transporte ?? null}
         configuracionesIniciales={configuracionesIniciales}
       />
