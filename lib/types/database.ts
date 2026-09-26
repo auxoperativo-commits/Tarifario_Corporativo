@@ -76,6 +76,7 @@ export interface ConfiguracionEnvio {
   tiempo_estimado_max_horas: number | null;
   precio_pallet: number | null;
   modo_precio_pallet?: 'precio_por_unidad' | 'precio_total_tramo' | null;
+  modo_umbral_kg?: 'desde' | 'hasta' | null;
   precio_camion_completo: number | null;
   precio_camion_actualizado_at?: string | null;
   apto_peritoneal: boolean;
@@ -109,9 +110,10 @@ export interface TarifaPallet {
 export interface TarifaKg {
   id: string;
   configuracion_id: string;
-  desde_kg: number;
+  umbral_kg: number;
   precio: number;
   updated_at?: string;
+  desde_kg?: number;
 }
 
 export interface ConfiguracionTag {

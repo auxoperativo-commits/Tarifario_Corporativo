@@ -12,7 +12,7 @@ import { parsearNumeroLocal } from '@/lib/numeros';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
   Transporte, Tag, Caracteristica, ConfiguracionEnvio,
-  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal, GrupoSucursales,
+  TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal, GrupoSucursales, GrupoSucursalesMiembros,
 } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
@@ -65,6 +65,7 @@ interface FormData {
   activo: boolean;
   aptoPeritoneal: boolean;
   modoPrecioPallet: 'precio_por_unidad' | 'precio_total_tramo';
+  modoUmbralKg: 'desde' | 'hasta';
   tramosBulto: TramoForm[];
   tramosPallet: TramoForm[];
   tramosKg: TramoForm[];
@@ -111,11 +112,16 @@ function formatearRutaConNombre(
   const localidad = ubicacion?.localidad ?? fallbackLocalidad ?? '';
   const nombre = ubicacion?.nombre ?? customNombre ?? null;
 
-  if (!provincia) return 'Sin ubicación';
+  if (!provincia && !nombre) return 'Sin ubicación';
 
   // Sucursales: mostrar solo "Nombre · Localidad" sin duplicar provincia
   if (ubicacion?.tipo === 'sucursal' && nombre) {
     return localidad ? `${nombre} · ${localidad}` : nombre;
+  }
+
+  // Grupos: mostrar el nombre del grupo
+  if (ubicacion?.tipo === 'grupo' && nombre) {
+    return nombre;
   }
 
   if (nombre) return `${provincia} (${nombre})${localidad ? ` · ${localidad}` : ''}`;
@@ -141,6 +147,7 @@ const FORM_VACIO: FormData = {
   activo: true,
   aptoPeritoneal: false,
   modoPrecioPallet: 'precio_por_unidad',
+  modoUmbralKg: 'desde',
   tramosBulto: [{ desde: 1, precio: '', esValorInicial: false }],
   tramosPallet: [{ desde: 1, precio: '' }],
   tramosKg: [{ desde: 1, precio: '' }],
@@ -158,6 +165,7 @@ interface Props {
   caracteristicasIniciales: Caracteristica[];
   sucursales: Sucursal[];
   grupos: GrupoSucursales[];
+  gruposMiembros?: GrupoSucursalesMiembros[];
   transportePreseleccionadoId: string | null;
   configuracionesIniciales: unknown[];
 }
@@ -165,7 +173,7 @@ interface Props {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export function ConfiguracionesClient({
-  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, sucursales, grupos, transportePreseleccionadoId, configuracionesIniciales,
+  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, sucursales, grupos, gruposMiembros = [], transportePreseleccionadoId, configuracionesIniciales,
 }: Props) {
   const { perfil } = useUser();
   const { toast } = useToast();
@@ -226,7 +234,42 @@ export function ConfiguracionesClient({
 
   // ── Abrir formulario ──────────────────────────────────────────────────────
   function abrirNuevo() {
-    setForm(FORM_VACIO);
+    let formInicial = FORM_VACIO;
+
+    // FIX 2: Sucursal predeterminada por usuario -> Autocompletar Grupo al crear Configuraciones
+    // 1. Buscar si el usuario logueado tiene una sucursal predeterminada guardada en su perfil
+    const sucursalPredId = perfil?.origen_predeterminado_sucursal_id;
+
+    if (sucursalPredId) {
+      // 2. Buscar a qué Grupo(s) de Sucursales pertenece esa sucursal (vía grupo_sucursales_miembros)
+      const grupoIds = gruposMiembros
+        .filter((m) => m.sucursal_id === sucursalPredId)
+        .map((m) => m.grupo_id);
+
+      // Si pertenece a uno o más grupos activos, priorizar el primero en orden alfabético por nombre
+      // Criterio de ordenamiento: Alfabético por `nombre` de grupo de forma consistente
+      const gruposCoincidentes = grupos
+        .filter((g) => g.activo && grupoIds.includes(g.id))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+      if (gruposCoincidentes.length > 0) {
+        const primerGrupo = gruposCoincidentes[0];
+        formInicial = {
+          ...FORM_VACIO,
+          origenTipo: 'grupo',
+          origenGrupoId: primerGrupo.id,
+          origen: {
+            provincia: '',
+            localidad: null,
+            nombre: primerGrupo.nombre,
+            tipo: 'grupo',
+            id: primerGrupo.id,
+          },
+        };
+      }
+    }
+
+    setForm(formInicial);
     setEditandoId(null);
     setDialogOpen(true);
   }
@@ -249,8 +292,8 @@ export function ConfiguracionesClient({
 
     const toTramosKg = (arr: TarifaKg[]): TramoForm[] =>
       arr.length > 0
-        ? [...arr].sort((a, b) => a.desde_kg - b.desde_kg).map((t) => ({
-            id: t.id, desde: t.desde_kg, precio: t.precio,
+        ? [...arr].sort((a, b) => (a.umbral_kg ?? a.desde_kg ?? 0) - (b.umbral_kg ?? b.desde_kg ?? 0)).map((t) => ({
+            id: t.id, desde: t.umbral_kg ?? t.desde_kg ?? '', precio: t.precio,
           }))
         : [{ desde: 1, precio: '' }];
 
@@ -278,6 +321,7 @@ export function ConfiguracionesClient({
       activo: c.activo,
       aptoPeritoneal: c.apto_peritoneal ?? false,
       modoPrecioPallet: c.modo_precio_pallet ?? 'precio_por_unidad',
+      modoUmbralKg: c.modo_umbral_kg ?? 'desde',
       tramosBulto: toTramosBulto(c.tarifas_bulto),
       tramosPallet: toTramosPallet(c.tarifas_pallet ?? []),
       tramosKg: toTramosKg(c.tarifas_kg ?? []),
@@ -405,8 +449,22 @@ export function ConfiguracionesClient({
     try {
       const fechaActualizacion = new Date().toISOString();
       const sucursalSeleccionada = sucursales.find((sucursal) => sucursal.id === form.origenSucursalId) ?? null;
-      const origenProvincia = sucursalSeleccionada?.provincia ?? form.origen?.provincia ?? '';
-      const origenLocalidad = sucursalSeleccionada?.localidad ?? form.origen?.localidad ?? null;
+      const grupoSeleccionado = grupos.find((grupo) => grupo.id === form.origenGrupoId) ?? null;
+      const grupoMiembrosIds = form.origenGrupoId
+        ? gruposMiembros.filter((m) => m.grupo_id === form.origenGrupoId).map((m) => m.sucursal_id)
+        : [];
+      const primeraSucursalDelGrupo = sucursales.find((s) => grupoMiembrosIds.includes(s.id));
+
+      const origenProvincia = form.origenTipo === 'sucursal'
+        ? (sucursalSeleccionada?.provincia ?? form.origen?.provincia ?? '')
+        : form.origenTipo === 'grupo'
+          ? (form.origen?.provincia || primeraSucursalDelGrupo?.provincia || '')
+          : (form.origen?.provincia ?? '');
+
+      const origenLocalidad = form.origenTipo === 'sucursal'
+        ? (sucursalSeleccionada?.localidad ?? form.origen?.localidad ?? null)
+        : (form.origen?.localidad ?? null);
+
       const origenSucursalSeleccionada = form.origenTipo === 'sucursal' ? form.origenSucursalId ?? null : null;
       const origenGrupoSeleccionado = form.origenTipo === 'grupo' ? form.origenGrupoId ?? null : null;
       const payload = {
@@ -427,6 +485,7 @@ export function ConfiguracionesClient({
         precio_camion_completo: form.precio_camion !== '' ? parsearNumeroLocal(form.precio_camion) : null,
         precio_camion_actualizado_at: form.precio_camion !== '' ? fechaActualizacion : null,
         modo_precio_pallet: form.modoPrecioPallet,
+        modo_umbral_kg: form.modoUmbralKg,
         apto_peritoneal: form.aptoPeritoneal,
         activo: form.activo,
         es_copia: false,
@@ -488,14 +547,14 @@ export function ConfiguracionesClient({
           : [];
         if (kgEliminados.length) await supabase.from('tarifas_kg').delete().in('id', kgEliminados);
         for (const tramo of kgFilled) {
-          const datos = { desde_kg: Number(tramo.desde), precio: parsearNumeroLocal(tramo.precio)!, updated_at: fechaActualizacion };
+          const datos = { umbral_kg: Number(tramo.desde), precio: parsearNumeroLocal(tramo.precio)!, updated_at: fechaActualizacion };
           const { error } = tramo.id
             ? await supabase.from('tarifas_kg').update(datos).eq('id', tramo.id)
             : await supabase.from('tarifas_kg').insert({ configuracion_id: configId, ...datos });
           if (error) throw error;
         }
       } catch {
-        console.warn('tarifas_kg no encontrada. Ejecutar supabase/migrations/06_tarifas_kg.sql');
+        console.warn('tarifas_kg no encontrada. Ejecutar supabase/migrations/16_modo_umbral_kg.sql');
       }
 
       // tags + precios de tag
@@ -578,9 +637,21 @@ export function ConfiguracionesClient({
   const configsFiltradas = useMemo(() => {
     const texto = normalizarUbicacion(filtroConfiguraciones);
     if (!texto) return configs;
-    return configs.filter((config) => [config.origen_provincia, config.origen_localidad, config.destino_provincia, config.destino_localidad]
-      .some((valor) => normalizarUbicacion(valor).includes(texto)));
-  }, [configs, filtroConfiguraciones]);
+    return configs.filter((config) => {
+      const grupo = config.origen_grupo_id ? grupos.find((g) => g.id === config.origen_grupo_id) : null;
+      const sucursal = config.origen_sucursal_id ? sucursales.find((s) => s.id === config.origen_sucursal_id) : null;
+      return [
+        config.origen_provincia,
+        config.origen_localidad,
+        config.destino_provincia,
+        config.destino_localidad,
+        grupo?.nombre,
+        sucursal?.nombre,
+        config.origen_nombre_personalizado,
+        config.destino_nombre_personalizado,
+      ].some((valor) => normalizarUbicacion(valor).includes(texto));
+    });
+  }, [configs, filtroConfiguraciones, grupos, sucursales]);
 
   async function finalizarImportacion(tid: string) {
     setTransporteId(tid);
@@ -772,9 +843,25 @@ export function ConfiguracionesClient({
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <span className="font-semibold text-slate-800 text-sm">
                         {(() => {
+                          const grupoOrigen = c.origen_grupo_id
+                            ? grupos.find((g) => g.id === c.origen_grupo_id)
+                            : null;
                           const sucursalOrigen = c.origen_sucursal_id
                             ? sucursales.find((s) => s.id === c.origen_sucursal_id)
                             : null;
+
+                          if (c.origen_grupo_id) {
+                            return (
+                              <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800 text-sm">
+                                <Shapes className="h-4 w-4 text-indigo-600 shrink-0" />
+                                <span>{grupoOrigen?.nombre ?? c.origen_nombre_personalizado ?? 'Grupo'}</span>
+                                <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-normal border-indigo-200 text-indigo-700 bg-indigo-50 shrink-0">
+                                  Grupo
+                                </Badge>
+                              </span>
+                            );
+                          }
+
                           return formatearRutaConNombre(
                             {
                               provincia: c.origen_provincia,
@@ -872,6 +959,24 @@ export function ConfiguracionesClient({
 
                 {exp && (
                   <div className="border-t px-4 py-3 bg-slate-50 space-y-3">
+                    {c.origen_grupo_id && (
+                      <div className="flex items-center gap-2 text-xs text-slate-700 pb-2 border-b">
+                        <Shapes className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                        <span className="font-semibold text-slate-800">Origen (Grupo de Sucursales):</span>
+                        <span className="font-medium">{grupos.find((g) => g.id === c.origen_grupo_id)?.nombre ?? 'Grupo'}</span>
+                      </div>
+                    )}
+                    {c.origen_sucursal_id && (
+                      <div className="flex items-center gap-2 text-xs text-slate-700 pb-2 border-b">
+                        <span className="font-semibold text-slate-800">Origen (Sucursal):</span>
+                        <span className="font-medium">
+                          {(() => {
+                            const suc = sucursales.find((s) => s.id === c.origen_sucursal_id);
+                            return suc ? `${suc.nombre} · ${suc.localidad}` : 'Sucursal';
+                          })()}
+                        </span>
+                      </div>
+                    )}
                     {c.tarifas_bulto.length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Tramos bulto</p>
@@ -904,18 +1009,31 @@ export function ConfiguracionesClient({
                     )}
                     {(c.tarifas_kg ?? []).length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Tramos kg</p>
-                        {[...(c.tarifas_kg ?? [])].sort((a, b) => a.desde_kg - b.desde_kg).map((t, i, arr) => (
-                          <div key={t.id} className="flex gap-2 text-sm">
-                            <span className="text-muted-foreground w-44">
-                              {i === arr.length - 1
-                                ? `Desde ${t.desde_kg} kg en adelante`
-                                : `${t.desde_kg}–${arr[i + 1].desde_kg} kg`}
-                            </span>
-                            <span className="font-semibold">{formatearPrecio(t.precio)}</span>
-                            <span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(t.updated_at ?? c.updated_at)}</span>
-                          </div>
-                        ))}
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tramos kg</p>
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-normal border-slate-200 text-slate-700 bg-slate-100">
+                            {c.modo_umbral_kg === 'hasta' ? 'Modo Hasta' : 'Modo Desde'}
+                          </Badge>
+                        </div>
+                        {[...(c.tarifas_kg ?? [])].sort((a, b) => (a.umbral_kg ?? a.desde_kg ?? 0) - (b.umbral_kg ?? b.desde_kg ?? 0)).map((t, i, arr) => {
+                          const umbral = t.umbral_kg ?? t.desde_kg ?? 0;
+                          let textoTramo = '';
+                          if (c.modo_umbral_kg === 'hasta') {
+                            const umbralAnterior = i > 0 ? (arr[i - 1].umbral_kg ?? arr[i - 1].desde_kg ?? 0) : 0;
+                            textoTramo = i === 0 ? `Hasta ${umbral} kg` : `Más de ${umbralAnterior} kg hasta ${umbral} kg`;
+                          } else {
+                            textoTramo = i === arr.length - 1
+                              ? `Desde ${umbral} kg en adelante`
+                              : `${umbral}–${arr[i + 1].umbral_kg ?? arr[i + 1].desde_kg ?? 0} kg`;
+                          }
+                          return (
+                            <div key={t.id} className="flex gap-2 text-sm">
+                              <span className="text-muted-foreground w-48">{textoTramo}</span>
+                              <span className="font-semibold">{formatearPrecio(t.precio)}</span>
+                              <span className="text-xs text-muted-foreground">Actualizado: {formatearFechaActualizacion(t.updated_at ?? c.updated_at)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                     {c.precio_camion_completo !== null && (
@@ -1155,17 +1273,37 @@ export function ConfiguracionesClient({
 
             <Separator />
 
-            <TramoSection
-              label="Precio por kg (tramos)"
-              icon={<Weight className="h-3.5 w-3.5 text-muted-foreground" />}
-              tramos={form.tramosKg}
-              unidad="kg"
-              paso={1}
-              onAdd={() => addTramo('tramosKg')}
-              onUpdate={(i, k, v) => updTramo('tramosKg', i, k, v)}
-              onDelete={(i) => delTramo('tramosKg', i)}
-              hint="Cada tramo representa el precio total para ese rango de kg. Ej: desde 5 kg → $10.000, desde 10 kg → $19.000."
-            />
+            {/* Tramos kg */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <Label className="flex items-center gap-1.5"><Weight className="h-3.5 w-3.5 text-muted-foreground" />Precio por Kilo (tramos)</Label>
+                <div className="flex items-center gap-2 rounded-md border bg-slate-50 px-2.5 py-1.5">
+                  <span className={`text-xs ${form.modoUmbralKg === 'desde' ? 'font-semibold text-slate-800' : 'text-muted-foreground'}`}>Desde</span>
+                  <Switch
+                    id="modo-umbral-kg"
+                    checked={form.modoUmbralKg === 'hasta'}
+                    onCheckedChange={(checked) => setForm((f) => ({ ...f, modoUmbralKg: checked ? 'hasta' : 'desde' }))}
+                  />
+                  <span className={`text-xs ${form.modoUmbralKg === 'hasta' ? 'font-semibold text-slate-800' : 'text-muted-foreground'}`}>Hasta</span>
+                </div>
+              </div>
+              <TramoSection
+                label=""
+                icon={null}
+                tramos={form.tramosKg}
+                unidad="kg"
+                paso={1}
+                onAdd={() => addTramo('tramosKg')}
+                onUpdate={(i, k, v) => updTramo('tramosKg', i, k, v)}
+                onDelete={(i) => delTramo('tramosKg', i)}
+                hint=""
+              />
+              <p className="text-xs text-muted-foreground">
+                {form.modoUmbralKg === 'desde'
+                  ? 'Modo Desde: a partir del umbral kg en adelante. Toma el tramo con el umbral más alto ≤ al peso.'
+                  : 'Modo Hasta: para pesos que no superen el umbral kg. Toma el tramo con el umbral más bajo ≥ al peso (superar el máximo excluye la ruta).'}
+              </p>
+            </div>
 
             <Separator />
 
@@ -1430,7 +1568,7 @@ function TramoSection({ label, icon, tramos, unidad, paso, onAdd, onUpdate, onDe
         {tramos.map((tramo, idx) => (
           <div key={idx} className="flex items-end gap-2">
             <div className="w-36 space-y-1">
-              {idx === 0 && <Label className="text-xs text-muted-foreground">Desde {unidad} Nº</Label>}
+              {idx === 0 && <Label className="text-xs text-muted-foreground">{unidad === 'kg' ? 'Umbral (kg)' : `Desde ${unidad} Nº`}</Label>}
               <Input type="number" min={paso} step={paso} placeholder={String(paso)}
                 value={tramo.desde} onChange={(e) => onUpdate(idx, 'desde', e.target.value)} />
             </div>

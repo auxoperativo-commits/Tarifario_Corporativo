@@ -164,7 +164,15 @@ export function filtrarConfiguraciones(
   const cumpleRequisitos = (c: ConfiguracionConDatos) => {
     if (totalBultosReq > 0 && (!c.tarifas_bulto || c.tarifas_bulto.length === 0)) return false;
     if (totalPalletsReq > 0 && (!c.tarifas_pallet || c.tarifas_pallet.length === 0)) return false;
-    if (totalKgReq > 0 && (!c.tarifas_kg || c.tarifas_kg.length === 0)) return false;
+    if (totalKgReq > 0) {
+      if (!c.tarifas_kg || c.tarifas_kg.length === 0) return false;
+      // CASO BORDE HASTA: si el peso consultado supera el umbral_kg más alto configurado en modo "Hasta",
+      // la configuración se excluye de los resultados.
+      if (c.modo_umbral_kg === 'hasta') {
+        const maxUmbral = Math.max(...c.tarifas_kg.map((t) => t.umbral_kg ?? t.desde_kg ?? 0));
+        if (totalKgReq > maxUmbral) return false;
+      }
+    }
     if (totalCamionReq && (c.precio_camion_completo === null || c.precio_camion_completo === undefined)) return false;
     if (busqueda.soloPeritoneal && !c.apto_peritoneal) return false;
 
@@ -226,7 +234,7 @@ export function calcularPrecio(
 
   // Kg
   if (busqueda.cantidadKg > 0) {
-    const desgloseKg = calcularKg(config.tarifas_kg ?? [], busqueda.cantidadKg);
+    const desgloseKg = calcularKg(config.tarifas_kg ?? [], busqueda.cantidadKg, config.modo_umbral_kg);
     items.push(...desgloseKg.items);
     total += desgloseKg.total;
   }
@@ -382,17 +390,42 @@ function calcularBultos(
 
 function calcularKg(
   tarifas: TarifaKg[],
-  cantidad: number
+  cantidad: number,
+  modoUmbralKg: ConfiguracionEnvio['modo_umbral_kg'] = 'desde'
 ): DesglosePrecio {
   if (tarifas.length === 0) return { items: [], total: 0 };
 
-  const tramosAsc = [...tarifas].sort((a, b) => a.desde_kg - b.desde_kg);
-  const tramo = [...tramosAsc].reverse().find((t) => t.desde_kg <= cantidad) ?? tramosAsc[0];
+  const tramosAsc = [...tarifas].sort((a, b) => (a.umbral_kg ?? a.desde_kg ?? 0) - (b.umbral_kg ?? b.desde_kg ?? 0));
+
+  if (modoUmbralKg === 'hasta') {
+    // Modo "Hasta": todo peso que no supere U kg paga P.
+    // Tomar el tramo con el umbral_kg más BAJO que sea MAYOR O IGUAL al peso consultado.
+    const tramo = tramosAsc.find((t) => (t.umbral_kg ?? t.desde_kg ?? 0) >= cantidad);
+    if (!tramo) {
+      return { items: [], total: 0 };
+    }
+    const umbral = tramo.umbral_kg ?? tramo.desde_kg ?? 0;
+    const subtotal = tramo.precio;
+    return {
+      items: [{
+        descripcion: `${formatearCantidad(cantidad)} kg (tramo hasta ${formatearCantidad(umbral)} kg)`,
+        precio: tramo.precio,
+        cantidad,
+        subtotal,
+      }],
+      total: subtotal,
+    };
+  }
+
+  // Modo "Desde": a partir de U kg (inclusive) en adelante, el precio es P, hasta que aparezca un umbral mayor.
+  // Tomar el tramo con el umbral_kg más alto que sea MENOR O IGUAL al peso consultado.
+  const tramo = [...tramosAsc].reverse().find((t) => (t.umbral_kg ?? t.desde_kg ?? 0) <= cantidad) ?? tramosAsc[0];
+  const umbral = tramo.umbral_kg ?? tramo.desde_kg ?? 0;
   const subtotal = tramo.precio;
 
   return {
     items: [{
-      descripcion: `${formatearCantidad(cantidad)} kg (tramo desde ${tramo.desde_kg} kg)`,
+      descripcion: `${formatearCantidad(cantidad)} kg (tramo desde ${formatearCantidad(umbral)} kg)`,
       precio: tramo.precio,
       cantidad,
       subtotal,

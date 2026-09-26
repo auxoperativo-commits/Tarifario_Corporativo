@@ -58,6 +58,9 @@ create table configuraciones_envio (
   precio_pallet numeric(12,2),
   modo_precio_pallet text not null default 'precio_por_unidad' check (modo_precio_pallet in ('precio_por_unidad', 'precio_total_tramo')),
 
+  -- modo umbral por kilo: 'desde' (inclusive en adelante) o 'hasta' (umbral techo)
+  modo_umbral_kg text not null default 'desde' check (modo_umbral_kg in ('desde', 'hasta')),
+
   -- precio fijo por camion completo
   precio_camion_completo numeric(12,2),
   precio_camion_actualizado_at timestamptz,
@@ -73,12 +76,6 @@ create index idx_config_transporte on configuraciones_envio (transporte_id);
 
 -- ---------------------------------------------------------
 -- TARIFAS ESCALONADAS POR BULTO
--- Permite N tramos de precio. Ejemplo:
---   desde_bulto = 1 -> precio 18000  (el primer bulto)
---   desde_bulto = 2 -> precio 5000   (el segundo bulto en adelante)
---   desde_bulto = 6 -> precio 4000   (a partir del sexto, si se quiere agregar otro tramo)
--- El precio total se calcula recorriendo cada bulto y aplicando el tramo
--- vigente (el de mayor "desde_bulto" que sea <= al numero de bulto).
 -- ---------------------------------------------------------
 create table tarifas_bulto (
   id uuid primary key default uuid_generate_v4(),
@@ -90,6 +87,20 @@ create table tarifas_bulto (
 );
 
 create index idx_tarifas_bulto_config on tarifas_bulto (configuracion_id);
+
+-- ---------------------------------------------------------
+-- TARIFAS ESCALONADAS POR KILO
+-- ---------------------------------------------------------
+create table tarifas_kg (
+  id uuid primary key default uuid_generate_v4(),
+  configuracion_id uuid not null references configuraciones_envio(id) on delete cascade,
+  umbral_kg numeric not null check (umbral_kg > 0),
+  precio numeric(12,2) not null check (precio >= 0),
+  updated_at timestamptz not null default now(),
+  unique (configuracion_id, umbral_kg)
+);
+
+create index idx_tarifas_kg_config on tarifas_kg (configuracion_id);
 
 -- ---------------------------------------------------------
 -- RELACION CONFIGURACION <-> TAGS (muchos a muchos)
