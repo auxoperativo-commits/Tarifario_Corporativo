@@ -38,12 +38,27 @@ end $$;
 do $$
 begin
   if to_regclass('public.tarifas_kg_tramo') is not null then
-    execute '
-      insert into public.tarifas_kg (configuracion_id, umbral_kg, precio, updated_at)
-      select configuracion_id, coalesce(umbral_kg, desde_kg, 1), precio, coalesce(updated_at, now())
-      from public.tarifas_kg_tramo
-      on conflict do nothing
-    ';
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg_tramo' and column_name = 'umbral_kg'
+    ) then
+      execute '
+        insert into public.tarifas_kg (configuracion_id, umbral_kg, precio, updated_at)
+        select configuracion_id, umbral_kg, precio, coalesce(updated_at, now())
+        from public.tarifas_kg_tramo
+        on conflict do nothing
+      ';
+    elsif exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg_tramo' and column_name = 'desde_kg'
+    ) then
+      execute '
+        insert into public.tarifas_kg (configuracion_id, umbral_kg, precio, updated_at)
+        select configuracion_id, desde_kg, precio, coalesce(updated_at, now())
+        from public.tarifas_kg_tramo
+        on conflict do nothing
+      ';
+    end if;
     drop table public.tarifas_kg_tramo cascade;
   end if;
 end $$;

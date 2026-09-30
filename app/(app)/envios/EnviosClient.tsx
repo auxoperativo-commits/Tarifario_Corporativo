@@ -877,7 +877,7 @@ interface ResultadoCardProps {
 }
 
 function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
-  const { transporte, tags, precioTotal, tiempoMin, tiempoMax, desglose } = resultado;
+  const { transporte, tags, servicios, precioTotal, tiempoMin, tiempoMax, desglose } = resultado;
   const montoIva = Math.round(precioTotal * 0.21);
   const precioConIva = precioTotal + montoIva;
   const esBest = posicion === 0;
@@ -986,7 +986,7 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
               <Clock className="h-3.5 w-3.5" />{formatearTiempo(tiempoMin, tiempoMax)}
             </div>
           </div>
-          {(tags.length > 0 || resultado.configuracion.apto_peritoneal) && (
+          {(tags.length > 0 || servicios.length > 0 || resultado.configuracion.apto_peritoneal) && (
             <div className="flex flex-wrap gap-1.5">
               {resultado.configuracion.apto_peritoneal && (
                 <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50">
@@ -996,6 +996,11 @@ function ResultadoCard({ resultado, posicion }: ResultadoCardProps) {
               {tags.map((tag) => (
                 <span key={tag.id} className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: tag.color }}>
                   {tag.nombre}
+                </span>
+              ))}
+              {servicios.map((servicio) => (
+                <span key={servicio.id} className="inline-flex items-center rounded-[6px] border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                  {servicio.nombre} · {formatearPrecio(servicio.valor)}
                 </span>
               ))}
             </div>

@@ -11,7 +11,7 @@ import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 import { parsearNumeroLocal } from '@/lib/numeros';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
 import type {
-  Transporte, Tag, Caracteristica, ConfiguracionEnvio,
+  Transporte, Tag, Caracteristica, ServicioTransporte, ConfiguracionEnvio,
   TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal, GrupoSucursales, GrupoSucursalesMiembros,
 } from '@/lib/types/database';
 
@@ -51,6 +51,7 @@ interface ConfiguracionConRelaciones extends ConfiguracionEnvio {
   configuracion_tags: { tag_id: string; configuracion_tag_precios?: TagPrecio[] }[];
   configuracion_tag_precios?: TagPrecio[];
   configuracion_caracteristicas?: { caracteristica_id: string }[];
+  configuracion_servicios?: Array<{ servicio_id: string; valor: number | string | null; servicios_transporte?: ServicioTransporte | null }>;
 }
 
 interface FormData {
@@ -78,6 +79,8 @@ interface FormData {
     camion_completo: number | string;
   }>;
   caracteristicaIds: string[];
+  servicioIds: string[];
+  servicioValores: Record<string, number | string>;
 }
 
 type EstadoActualizacion = 'vigente' | 'atencion' | 'desactualizado';
@@ -100,6 +103,11 @@ function formatearFechaActualizacion(fecha: string | null): string {
   return fecha
     ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(new Date(fecha))
     : 'Sin fecha registrada';
+}
+
+function isKgSchemaMismatchError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /column\s+\"?(umbral_kg|desde_kg)\"?\s+does not exist|column\s+\"?(umbral_kg|desde_kg)\"?\s+no existe/i.test(message);
 }
 
 function formatearRutaConNombre(
@@ -154,6 +162,8 @@ const FORM_VACIO: FormData = {
   tagIds: [],
   tagPrecios: {},
   caracteristicaIds: [],
+  servicioIds: [],
+  servicioValores: {},
 };
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -163,6 +173,7 @@ interface Props {
   transportesParaImportar: Transporte[];
   tagsIniciales: Tag[];
   caracteristicasIniciales: Caracteristica[];
+  serviciosIniciales: ServicioTransporte[];
   sucursales: Sucursal[];
   grupos: GrupoSucursales[];
   gruposMiembros?: GrupoSucursalesMiembros[];
@@ -173,7 +184,7 @@ interface Props {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export function ConfiguracionesClient({
-  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, sucursales, grupos, gruposMiembros = [], transportePreseleccionadoId, configuracionesIniciales,
+  transportes, transportesParaImportar, tagsIniciales, caracteristicasIniciales, serviciosIniciales, sucursales, grupos, gruposMiembros = [], transportePreseleccionadoId, configuracionesIniciales,
 }: Props) {
   const { perfil } = useUser();
   const { toast } = useToast();
@@ -186,6 +197,7 @@ export function ConfiguracionesClient({
   );
   const [tags, setTags] = useState<Tag[]>(tagsIniciales);
   const [caracteristicas, setCaracteristicas] = useState<Caracteristica[]>(caracteristicasIniciales);
+  const [servicios, setServicios] = useState<ServicioTransporte[]>(serviciosIniciales);
   const [loading, setLoading] = useState(false);
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
 
@@ -220,7 +232,7 @@ export function ConfiguracionesClient({
     setLoading(true);
     const { data, error } = await supabase
       .from('configuraciones_envio')
-      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id), configuracion_tag_precios(*), configuracion_caracteristicas(caracteristica_id)`)
+      .select(`*, tarifas_bulto(*), tarifas_pallet(*), tarifas_kg(*), configuracion_tags(tag_id), configuracion_tag_precios(*), configuracion_caracteristicas(caracteristica_id), configuracion_servicios(servicio_id, valor, servicios_transporte(*))`)
       .eq('transporte_id', tid)
       .order('created_at', { ascending: false });
     if (error) toast({ variant: 'destructive', title: 'Error al cargar configuraciones.' });
@@ -342,6 +354,10 @@ export function ConfiguracionesClient({
         ])
       ),
       caracteristicaIds: (c.configuracion_caracteristicas ?? []).map((cc) => cc.caracteristica_id),
+      servicioIds: (c.configuracion_servicios ?? []).map((cs) => cs.servicio_id),
+      servicioValores: Object.fromEntries(
+        (c.configuracion_servicios ?? []).map((cs) => [cs.servicio_id, cs.valor ?? ''])
+      ),
     });
     setEditandoId(c.id);
     setDialogOpen(true);
@@ -413,6 +429,21 @@ export function ConfiguracionesClient({
     });
   }
 
+  function toggleServicio(id: string) {
+    setForm((f) => {
+      const seleccionada = f.servicioIds.includes(id);
+      const nuevosServicioIds = seleccionada ? f.servicioIds.filter((x) => x !== id) : [...f.servicioIds, id];
+      const nuevosValores = { ...f.servicioValores };
+      if (!seleccionada && !(id in nuevosValores)) {
+        nuevosValores[id] = '';
+      }
+      if (seleccionada) {
+        delete nuevosValores[id];
+      }
+      return { ...f, servicioIds: nuevosServicioIds, servicioValores: nuevosValores };
+    });
+  }
+
   // ── Validar ───────────────────────────────────────────────────────────────
   function validar(): string | null {
     const origenSeleccionado = Boolean(form.origenSucursalId || form.origenGrupoId || form.origen?.provincia);
@@ -438,7 +469,55 @@ export function ConfiguracionesClient({
         return 'Ingresá precios válidos para los tags.';
       }
     }
+    for (const servicio of Object.values(form.servicioValores)) {
+      if (servicio !== '' && ((parsearNumeroLocal(servicio) ?? -1) < 0)) {
+        return 'Ingresá valores válidos para los servicios de transporte.';
+      }
+    }
     return null;
+  }
+
+  async function guardarTarifasKg(configId: string, fechaActualizacion: string) {
+    const kgFilled = form.tramosKg.filter((t) => t.desde !== '' && t.precio !== '');
+    const kgConId = kgFilled.filter((t) => t.id).map((t) => t.id!);
+    const kgEliminados = editandoId
+      ? (configs.find((c) => c.id === configId)?.tarifas_kg ?? []).filter((t) => !kgConId.includes(t.id)).map((t) => t.id)
+      : [];
+
+    if (kgEliminados.length) {
+      const { error: errorDelete } = await supabase.from('tarifas_kg').delete().in('id', kgEliminados);
+      if (errorDelete) throw errorDelete;
+    }
+
+    for (const tramo of kgFilled) {
+      const datosModernos = {
+        umbral_kg: Number(tramo.desde),
+        precio: parsearNumeroLocal(tramo.precio)!,
+        updated_at: fechaActualizacion,
+      };
+      const datosLegado = {
+        desde_kg: Number(tramo.desde),
+        precio: parsearNumeroLocal(tramo.precio)!,
+        updated_at: fechaActualizacion,
+      };
+
+      if (tramo.id) {
+        const { error } = await supabase.from('tarifas_kg').update(datosModernos).eq('id', tramo.id);
+        if (error) {
+          if (!isKgSchemaMismatchError(error)) throw error;
+          const { error: errorLegacy } = await supabase.from('tarifas_kg').update(datosLegado).eq('id', tramo.id);
+          if (errorLegacy) throw errorLegacy;
+        }
+        continue;
+      }
+
+      const { error } = await supabase.from('tarifas_kg').insert({ configuracion_id: configId, ...datosModernos });
+      if (error) {
+        if (!isKgSchemaMismatchError(error)) throw error;
+        const { error: errorLegacy } = await supabase.from('tarifas_kg').insert({ configuracion_id: configId, ...datosLegado });
+        if (errorLegacy) throw errorLegacy;
+      }
+    }
   }
 
   // ── Guardar ───────────────────────────────────────────────────────────────
@@ -538,24 +617,8 @@ export function ConfiguracionesClient({
         console.warn('tarifas_pallet no encontrada. Ejecutar supabase/migrations/01_tarifas_pallet.sql');
       }
 
-      // tarifas_kg
-      try {
-        const kgFilled = form.tramosKg.filter((t) => t.desde !== '' && t.precio !== '');
-        const kgConId = kgFilled.filter((t) => t.id).map((t) => t.id!);
-        const kgEliminados = editandoId
-          ? (configs.find((c) => c.id === configId)?.tarifas_kg ?? []).filter((t) => !kgConId.includes(t.id)).map((t) => t.id)
-          : [];
-        if (kgEliminados.length) await supabase.from('tarifas_kg').delete().in('id', kgEliminados);
-        for (const tramo of kgFilled) {
-          const datos = { umbral_kg: Number(tramo.desde), precio: parsearNumeroLocal(tramo.precio)!, updated_at: fechaActualizacion };
-          const { error } = tramo.id
-            ? await supabase.from('tarifas_kg').update(datos).eq('id', tramo.id)
-            : await supabase.from('tarifas_kg').insert({ configuracion_id: configId, ...datos });
-          if (error) throw error;
-        }
-      } catch {
-        console.warn('tarifas_kg no encontrada. Ejecutar supabase/migrations/16_modo_umbral_kg.sql');
-      }
+      // tarifas_kg: compatibilidad con schemas viejos/nuevos (umbral_kg vs desde_kg)
+      await guardarTarifasKg(configId, fechaActualizacion);
 
       // tags + precios de tag
       await supabase.from('configuracion_tags').delete().eq('configuracion_id', configId);
@@ -605,6 +668,25 @@ export function ConfiguracionesClient({
         }
       } catch {
         console.warn('configuracion_caracteristicas no encontrada. Ejecutar supabase/migrations/12_caracteristicas_transporte.sql');
+      }
+
+      // servicios de transporte con valor fijo por configuración
+      try {
+        await supabase.from('configuracion_servicios').delete().eq('configuracion_id', configId);
+        const serviciosParaGuardar = form.servicioIds
+          .map((servicio_id) => {
+            const valor = form.servicioValores[servicio_id];
+            if (valor === undefined || valor === '') return null;
+            const valorNumerico = parsearNumeroLocal(valor);
+            if (valorNumerico === null) return null;
+            return { configuracion_id: configId, servicio_id, valor: valorNumerico };
+          })
+          .filter((item): item is { configuracion_id: string; servicio_id: string; valor: number } => item !== null);
+        if (serviciosParaGuardar.length > 0) {
+          await supabase.from('configuracion_servicios').insert(serviciosParaGuardar);
+        }
+      } catch {
+        console.warn('configuracion_servicios no encontrada. Ejecutar supabase/migrations/17_servicios_transporte.sql');
       }
 
       toast({ title: editandoId ? 'Configuración actualizada.' : 'Configuración creada.' });
@@ -921,6 +1003,25 @@ export function ConfiguracionesClient({
                         ))}
                       </div>
                     )}
+                    {(() => {
+                      const serviciosDeLaConfig = (c.configuracion_servicios ?? [])
+                        .map((cs) => {
+                          const servicio = servicios.find((s) => s.id === cs.servicio_id);
+                          if (!servicio) return null;
+                          return { id: servicio.id, nombre: servicio.nombre, valor: Number(cs.valor ?? 0) };
+                        })
+                        .filter(Boolean) as Array<{ id: string; nombre: string; valor: number }>;
+                      if (!serviciosDeLaConfig.length) return null;
+                      return (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {serviciosDeLaConfig.map((servicio) => (
+                            <span key={servicio.id} className="rounded-[6px] border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                              {servicio.nombre} · {formatearPrecio(servicio.valor)}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       const caracsDeLaConfig = (c.configuracion_caracteristicas ?? [])
                         .map((cc) => caracteristicas.find((car) => car.id === cc.caracteristica_id))
@@ -1446,6 +1547,62 @@ export function ConfiguracionesClient({
                     );
                   })}
                 </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Servicios de Transporte */}
+            <div>
+              <Label className="mb-3 block">Servicios de Transporte</Label>
+              {servicios.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No hay servicios definidos. Creá algunos en el módulo Tags.</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {servicios.map((servicio) => {
+                      const sel = form.servicioIds.includes(servicio.id);
+                      return (
+                        <button
+                          key={servicio.id}
+                          type="button"
+                          onClick={() => toggleServicio(servicio.id)}
+                          className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-all ${
+                            sel ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                          }`}
+                          aria-pressed={sel}
+                        >
+                          {sel && <span>✓</span>}{servicio.nombre}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {form.servicioIds.length > 0 && (
+                    <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                      {form.servicioIds.map((servicioId) => {
+                        const servicio = servicios.find((s) => s.id === servicioId);
+                        if (!servicio) return null;
+                        return (
+                          <div key={servicioId} className="grid grid-cols-[1fr_140px] items-center gap-2 rounded-md border border-slate-200 bg-white p-2.5">
+                            <span className="text-xs font-medium text-slate-700">{servicio.nombre}</span>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              value={form.servicioValores[servicioId] ?? ''}
+                              onChange={(e) => setForm((f) => ({
+                                ...f,
+                                servicioValores: { ...f.servicioValores, [servicioId]: e.target.value },
+                              }))}
+                              placeholder="$ fijo"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

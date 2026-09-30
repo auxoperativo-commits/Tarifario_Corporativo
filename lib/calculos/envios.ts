@@ -3,6 +3,7 @@ import type {
   Transporte,
   Tag,
   Caracteristica,
+  ServicioTransporte,
   TagPrecio,
   TarifaBulto,
   TarifaPallet,
@@ -30,6 +31,9 @@ export interface ConfiguracionConDatos extends ConfiguracionEnvio {
   // Características de transporte (sin costo, solo para filtrar/mostrar)
   configuracion_caracteristicas?: Array<{ caracteristica_id: string; caracteristicas_transporte?: Caracteristica | null }>;
   caracteristicas?: Caracteristica[];
+  // Servicios de transporte con valor fijo por configuración
+  configuracion_servicios?: Array<{ servicio_id: string; valor: number | string | null; servicios_transporte?: ServicioTransporte | null }>;
+  servicios?: Array<{ id: string; nombre: string; valor: number }>;
 }
 
 /** Compara nombres de Georef y datos importados sin diferencias de tildes o mayúsculas. */
@@ -65,6 +69,22 @@ export function extraerCaracteristicas(config: ConfiguracionConDatos): Caracteri
       .map((cc) => cc.caracteristicas_transporte)
       .filter((c): c is Caracteristica => c !== null && c !== undefined);
   }
+  return [];
+}
+
+export function extraerServicios(config: ConfiguracionConDatos): Array<{ id: string; nombre: string; valor: number }> {
+  if (config.servicios && config.servicios.length > 0) return config.servicios;
+
+  if (config.configuracion_servicios) {
+    return config.configuracion_servicios
+      .map((cs) => ({
+        id: cs.servicio_id,
+        nombre: cs.servicios_transporte?.nombre ?? 'Servicio',
+        valor: Number(cs.valor ?? 0),
+      }))
+      .filter((servicio) => servicio.valor > 0);
+  }
+
   return [];
 }
 
@@ -248,6 +268,19 @@ export function calcularPrecio(
       subtotal: precio,
     });
     total += precio;
+  }
+
+  // Servicios de transporte con valor fijo por configuración
+  const servicios = extraerServicios(config);
+  for (const servicio of servicios) {
+    const valor = Number(servicio.valor ?? 0);
+    if (valor <= 0) continue;
+    items.push({
+      descripcion: `${servicio.nombre} (servicio fijo)`,
+      precio: valor,
+      subtotal: valor,
+    });
+    total += valor;
   }
 
   // ── Costo adicional por Tags seleccionados ─────────────────────────────────
@@ -521,6 +554,7 @@ export function calcularRanking(
         transporte: c.config.transportes,
         tags: extraerTags(c.config),
         caracteristicas: extraerCaracteristicas(c.config),
+        servicios: extraerServicios(c.config),
         precioTotal: c.desglose.total,
         tiempoMin: c.config.tiempo_estimado_min_horas,
         tiempoMax: c.config.tiempo_estimado_max_horas,

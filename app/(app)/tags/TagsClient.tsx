@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/lib/context/UserContext';
 import { puedeEditar } from '@/components/layout/AppShell';
 import { useToast } from '@/hooks/use-toast';
-import type { Tag, Caracteristica } from '@/lib/types/database';
+import type { Tag, Caracteristica, ServicioTransporte } from '@/lib/types/database';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +35,7 @@ const COLORES_PRESET = [
 interface TagsClientProps {
   tagsIniciales: Tag[];
   caracteristicasIniciales: Caracteristica[];
+  serviciosIniciales: ServicioTransporte[];
 }
 
 // ─── Sub-componente: selector de color (reutilizable) ─────────────────────────
@@ -70,7 +71,7 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export function TagsClient({ tagsIniciales, caracteristicasIniciales }: TagsClientProps) {
+export function TagsClient({ tagsIniciales, caracteristicasIniciales, serviciosIniciales }: TagsClientProps) {
   const { perfil } = useUser();
   const { toast } = useToast();
   const supabase = createClient();
@@ -93,6 +94,14 @@ export function TagsClient({ tagsIniciales, caracteristicasIniciales }: TagsClie
   const [caracEditandoId, setCaracEditandoId] = useState<string | null>(null);
   const [caracNombre, setCaracNombre] = useState('');
   const [caracColor, setCaracColor] = useState('#6b7280');
+
+  // ── Estado: Servicios de transporte ─────────────────────────────────────
+  const [servicios, setServicios] = useState<ServicioTransporte[]>(serviciosIniciales);
+  const [servicioDialogOpen, setServicioDialogOpen] = useState(false);
+  const [servicioEliminandoId, setServicioEliminandoId] = useState<string | null>(null);
+  const [servicioSaving, setServicioSaving] = useState(false);
+  const [servicioEditandoId, setServicioEditandoId] = useState<string | null>(null);
+  const [servicioNombre, setServicioNombre] = useState('');
 
   // ── Handlers: Tags ─────────────────────────────────────────────────────────
 
@@ -212,6 +221,62 @@ export function TagsClient({ tagsIniciales, caracteristicasIniciales }: TagsClie
     toast({ title: 'Característica eliminada.' });
   }
 
+  // ── Handlers: Servicios de Transporte ─────────────────────────────────────
+
+  function abrirNuevoServicio() {
+    setServicioNombre(''); setServicioEditandoId(null); setServicioDialogOpen(true);
+  }
+
+  function abrirEdicionServicio(s: ServicioTransporte) {
+    setServicioNombre(s.nombre); setServicioEditandoId(s.id); setServicioDialogOpen(true);
+  }
+
+  async function guardarServicio() {
+    if (!servicioNombre.trim()) {
+      toast({ variant: 'destructive', title: 'El nombre es obligatorio.' });
+      return;
+    }
+    setServicioSaving(true);
+    try {
+      if (servicioEditandoId) {
+        const { error } = await supabase.from('servicios_transporte')
+          .update({ nombre: servicioNombre.trim() })
+          .eq('id', servicioEditandoId);
+        if (error) throw error;
+        setServicios((prev) => prev.map((s) => s.id === servicioEditandoId ? { ...s, nombre: servicioNombre.trim() } : s));
+        toast({ title: 'Servicio actualizado.' });
+      } else {
+        const { data, error } = await supabase.from('servicios_transporte')
+          .insert({ nombre: servicioNombre.trim() })
+          .select().single();
+        if (error) throw error;
+        setServicios((prev) => [...prev, data as ServicioTransporte].sort((a, b) => a.nombre.localeCompare(b.nombre)));
+        toast({ title: 'Servicio creado.' });
+      }
+      setServicioDialogOpen(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error inesperado';
+      toast({
+        variant: 'destructive',
+        title: 'Error al guardar',
+        description: msg.includes('unique') ? 'Ya existe un servicio con ese nombre.' : msg,
+      });
+    } finally {
+      setServicioSaving(false);
+    }
+  }
+
+  async function eliminarServicio(id: string) {
+    const { error } = await supabase.from('servicios_transporte').delete().eq('id', id);
+    if (error) {
+      toast({ variant: 'destructive', title: 'Error al eliminar.', description: error.message });
+      return;
+    }
+    setServicios((prev) => prev.filter((s) => s.id !== id));
+    setServicioEliminandoId(null);
+    toast({ title: 'Servicio eliminado.' });
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -279,7 +344,71 @@ export function TagsClient({ tagsIniciales, caracteristicasIniciales }: TagsClie
       <Separator className="my-8" />
 
       {/* ═══════════════════════════════════════════════════════════════════
-          SECCIÓN 2 — CARACTERÍSTICAS DE TRANSPORTE (sin valor económico)
+          SECCIÓN 2 — SERVICIOS DE TRANSPORTE (valor fijo)
+      ═══════════════════════════════════════════════════════════════════ */}
+      <section className="mb-10">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+              <Tags className="h-4 w-4 text-slate-600" />
+              Servicios de Transporte
+            </h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Cargos fijos asociados a una configuración concreta. Se suman siempre al total final de la cotización.
+            </p>
+          </div>
+          {editar && (
+            <Button size="sm" variant="outline" onClick={abrirNuevoServicio}>
+              <Plus className="mr-2 h-4 w-4" />Nuevo servicio
+            </Button>
+          )}
+        </div>
+
+        {servicios.length === 0 ? (
+          <EmptyState
+            icon={Tags}
+            title="No hay servicios"
+            description="Creá servicios fijos para sumar costos adicionales por configuración (ej: Efecto de frío, Carga especial, etc.)."
+            action={editar ? (
+              <Button variant="outline" onClick={abrirNuevoServicio}>
+                <Plus className="mr-2 h-4 w-4" />Nuevo servicio
+              </Button>
+            ) : undefined}
+          />
+        ) : (
+          <div className="flex flex-wrap gap-3">
+            {servicios.map((servicio) => (
+              <div key={servicio.id} className="flex items-center gap-2 bg-white border rounded-md px-3 py-2 shadow-sm">
+                <span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100 shrink-0" aria-hidden="true" />
+                <span className="text-sm font-medium text-slate-700">{servicio.nombre}</span>
+                {editar && (
+                  <div className="flex items-center gap-1 ml-1">
+                    <button
+                      onClick={() => abrirEdicionServicio(servicio)}
+                      className="rounded p-0.5 text-muted-foreground hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                      aria-label={`Editar servicio ${servicio.nombre}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setServicioEliminandoId(servicio.id)}
+                      className="rounded p-0.5 text-muted-foreground hover:text-destructive hover:bg-red-50 transition-colors"
+                      aria-label={`Eliminar servicio ${servicio.nombre}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECCIÓN 3 — CARACTERÍSTICAS DE TRANSPORTE (sin valor económico)
       ═══════════════════════════════════════════════════════════════════ */}
       <section>
         <div className="flex items-start justify-between mb-4">
@@ -456,6 +585,60 @@ export function TagsClient({ tagsIniciales, caracteristicasIniciales }: TagsClie
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Dialog alta/edición Servicio ─────────────────────────────────────── */}
+      <Dialog open={servicioDialogOpen} onOpenChange={setServicioDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{servicioEditandoId ? 'Editar servicio' : 'Nuevo servicio'}</DialogTitle>
+            <DialogDescription>
+              Los servicios de transporte agregan un valor fijo a la configuración y se suman siempre al total final.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="servicio-nombre">Nombre <span className="text-destructive">*</span></Label>
+              <Input
+                id="servicio-nombre"
+                placeholder="Ej: Manejo especial"
+                value={servicioNombre}
+                onChange={(e) => setServicioNombre(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && guardarServicio()}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setServicioDialogOpen(false)} disabled={servicioSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={guardarServicio} disabled={servicioSaving}>
+              {servicioSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {servicioEditandoId ? 'Guardar' : 'Crear servicio'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── AlertDialog eliminar Servicio ─────────────────────────────────────── */}
+      <AlertDialog open={!!servicioEliminandoId} onOpenChange={(o) => !o && setServicioEliminandoId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar servicio?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se desvinculará de todas las configuraciones que lo usen. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => eliminarServicio(servicioEliminandoId!)}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── AlertDialog eliminar Característica ─────────────────────────────── */}
       <AlertDialog open={!!caracEliminandoId} onOpenChange={(o) => !o && setCaracEliminandoId(null)}>

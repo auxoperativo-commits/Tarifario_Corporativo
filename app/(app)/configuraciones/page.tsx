@@ -12,11 +12,12 @@ export default async function ConfiguracionesPage({
   const params = await searchParams;
   const supabase = await createClient();
 
-  const [{ data: todosLosTransportes }, { data: tags }, { data: sucursales }, { data: caracteristicas }, { data: grupos }, { data: gruposMiembros }] = await Promise.all([
+  const [{ data: todosLosTransportes }, { data: tags }, { data: sucursales }, { data: caracteristicas }, { data: servicios }, { data: grupos }, { data: gruposMiembros }] = await Promise.all([
     supabase.from('transportes').select('*').order('razon_social'),
     supabase.from('tags').select('*').order('nombre'),
     supabase.from('sucursales').select('*').eq('activa', true).order('nombre'),
     supabase.from('caracteristicas_transporte').select('*').order('nombre'),
+    supabase.from('servicios_transporte').select('*').order('nombre'),
     supabase.from('grupos_sucursales').select('*').eq('activo', true).order('nombre'),
     supabase.from('grupo_sucursales_miembros').select('*'),
   ]);
@@ -44,6 +45,7 @@ export default async function ConfiguracionesPage({
         transportesParaImportar={todosLosTransportes ?? []}
         tagsIniciales={tags ?? []}
         caracteristicasIniciales={(caracteristicas ?? []) as import('@/lib/types/database').Caracteristica[]}
+        serviciosIniciales={(servicios ?? []) as import('@/lib/types/database').ServicioTransporte[]}
         sucursales={sucursales ?? []}
         grupos={(grupos ?? []) as import('@/lib/types/database').GrupoSucursales[]}
         gruposMiembros={(gruposMiembros ?? []) as import('@/lib/types/database').GrupoSucursalesMiembros[]}

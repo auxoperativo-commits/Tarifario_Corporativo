@@ -126,8 +126,19 @@ begin
   insert into public.tarifas_pallet (configuracion_id, desde_pallet, precio, updated_at)
     select v_nueva_id, desde_pallet, precio, updated_at from public.tarifas_pallet where configuracion_id = configuracion_origen;
   if to_regclass('public.tarifas_kg') is not null then
-    execute 'insert into public.tarifas_kg (configuracion_id, desde_kg, precio, updated_at) select $1, desde_kg, precio, updated_at from public.tarifas_kg where configuracion_id = $2'
-      using v_nueva_id, configuracion_origen;
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg' and column_name = 'umbral_kg'
+    ) then
+      execute 'insert into public.tarifas_kg (configuracion_id, umbral_kg, precio, updated_at) select $1, umbral_kg, precio, updated_at from public.tarifas_kg where configuracion_id = $2'
+        using v_nueva_id, configuracion_origen;
+    elsif exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg' and column_name = 'desde_kg'
+    ) then
+      execute 'insert into public.tarifas_kg (configuracion_id, desde_kg, precio, updated_at) select $1, desde_kg, precio, updated_at from public.tarifas_kg where configuracion_id = $2'
+        using v_nueva_id, configuracion_origen;
+    end if;
   end if;
   insert into public.configuracion_tags (configuracion_id, tag_id)
     select v_nueva_id, tag_id from public.configuracion_tags where configuracion_id = configuracion_origen;

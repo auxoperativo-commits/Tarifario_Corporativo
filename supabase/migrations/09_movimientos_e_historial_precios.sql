@@ -204,7 +204,21 @@ begin
   else
     if new.precio is not distinct from old.precio then return new; end if;
     v_configuracion_id := new.configuracion_id; v_anterior := old.precio;
-    v_nuevo := new.precio; v_desde := new.desde_kg; v_modalidad := 'Kg';
+    v_nuevo := new.precio;
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg' and column_name = 'umbral_kg'
+    ) then
+      v_desde := new.umbral_kg;
+    elsif exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg' and column_name = 'desde_kg'
+    ) then
+      execute 'select $1.desde_kg' into v_desde using new;
+    else
+      v_desde := 0;
+    end if;
+    v_modalidad := 'Kg';
   end if;
 
   select * into v_config from public.configuraciones_envio where id = v_configuracion_id;
@@ -301,9 +315,21 @@ begin
     select v_nueva_id, desde_pallet, precio, updated_at
     from public.tarifas_pallet where configuracion_id = configuracion_origen;
   if to_regclass('public.tarifas_kg') is not null then
-    execute 'insert into public.tarifas_kg (configuracion_id, desde_kg, precio, updated_at)
-      select $1, desde_kg, precio, updated_at from public.tarifas_kg where configuracion_id = $2'
-      using v_nueva_id, configuracion_origen;
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg' and column_name = 'umbral_kg'
+    ) then
+      execute 'insert into public.tarifas_kg (configuracion_id, umbral_kg, precio, updated_at)
+        select $1, umbral_kg, precio, updated_at from public.tarifas_kg where configuracion_id = $2'
+        using v_nueva_id, configuracion_origen;
+    elsif exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'tarifas_kg' and column_name = 'desde_kg'
+    ) then
+      execute 'insert into public.tarifas_kg (configuracion_id, desde_kg, precio, updated_at)
+        select $1, desde_kg, precio, updated_at from public.tarifas_kg where configuracion_id = $2'
+        using v_nueva_id, configuracion_origen;
+    end if;
   end if;
   insert into public.configuracion_tags (configuracion_id, tag_id)
     select v_nueva_id, tag_id from public.configuracion_tags where configuracion_id = configuracion_origen;

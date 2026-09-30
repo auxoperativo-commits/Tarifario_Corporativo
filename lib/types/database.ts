@@ -35,9 +35,24 @@ export interface Caracteristica {
   updated_at?: string;
 }
 
+export interface ServicioTransporte {
+  id: string;
+  nombre: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface ConfiguracionCaracteristica {
   configuracion_id: string;
   caracteristica_id: string;
+}
+
+export interface ConfiguracionServicio {
+  id: string;
+  configuracion_id: string;
+  servicio_id: string;
+  valor: number;
+  updated_at?: string;
 }
 
 /** Precio adicional de un tag dentro de una configuración de envío específica */
@@ -253,6 +268,7 @@ export interface ResultadoEnvio {
   transporte: Transporte;
   tags: Tag[];
   caracteristicas: Caracteristica[];
+  servicios: Array<{ id: string; nombre: string; valor: number }>;
   precioTotal: number;
   tiempoMin: number | null;
   tiempoMax: number | null;
