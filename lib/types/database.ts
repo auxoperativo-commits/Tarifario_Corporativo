@@ -162,6 +162,15 @@ export interface HistorialCalculo {
   created_at: string;
 }
 
+export interface UbicacionPersonalizadaMiembro {
+  id: string;
+  ubicacion_personalizada_id: string;
+  provincia: string;
+  localidad: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface UbicacionPersonalizada {
   id: string;
   usuario_id: string;
@@ -169,6 +178,8 @@ export interface UbicacionPersonalizada {
   provincia: string;
   localidad: string | null;
   created_at: string;
+  updated_at?: string;
+  ubicacion_personalizada_miembros?: UbicacionPersonalizadaMiembro[];
 }
 
 export interface Sucursal {

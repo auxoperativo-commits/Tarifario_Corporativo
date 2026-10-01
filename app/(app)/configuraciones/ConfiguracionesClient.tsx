@@ -214,11 +214,18 @@ export function ConfiguracionesClient({
   const [nuevaUbicacion, setNuevaUbicacion] = useState({ nombre: '', provincia: '', localidad: '' });
   const [ubicacionEditandoId, setUbicacionEditandoId] = useState<string | null>(null);
   const [guardandoUbicacion, setGuardandoUbicacion] = useState(false);
+  const [vistaActiva, setVistaActiva] = useState<'configuraciones' | 'ubicaciones'>('configuraciones');
+  const [ubicacionSeleccionadaId, setUbicacionSeleccionadaId] = useState<string | null>(null);
+  const [nuevoMiembroUbicacion, setNuevoMiembroUbicacion] = useState({ provincia: '', localidad: '' });
+  const [guardandoMiembroUbicacion, setGuardandoMiembroUbicacion] = useState(false);
 
   useEffect(() => {
     async function cargarUbicaciones() {
       try {
-        const { data } = await supabase.from('ubicaciones_personalizadas').select('*').order('nombre');
+        const { data } = await supabase
+          .from('ubicaciones_personalizadas')
+          .select('*, ubicacion_personalizada_miembros(*)')
+          .order('nombre');
         setUbicacionesPersonalizadas((data ?? []) as UbicacionPersonalizada[]);
       } catch {
         setUbicacionesPersonalizadas([]);
@@ -768,7 +775,19 @@ export function ConfiguracionesClient({
           .eq('id', ubicacionEditandoId)
           .select().single();
         if (error) throw error;
-        setUbicacionesPersonalizadas((prev) => prev.map((item) => item.id === data.id ? data as UbicacionPersonalizada : item));
+
+        const { error: errorMiembro } = await supabase.from('ubicacion_personalizada_miembros').upsert([
+          {
+            ubicacion_personalizada_id: data.id,
+            provincia: nuevaUbicacion.provincia.trim(),
+            localidad: nuevaUbicacion.localidad.trim() || null,
+          }
+        ], { onConflict: 'ubicacion_personalizada_id,provincia,localidad' });
+        if (errorMiembro && !/does not exist|relation .*ubicacion_personalizada_miembros.* does not exist/i.test(errorMiembro.message)) {
+          throw errorMiembro;
+        }
+
+        setUbicacionesPersonalizadas((prev) => prev.map((item) => item.id === data.id ? { ...data, ubicacion_personalizada_miembros: [{ id: crypto.randomUUID(), ubicacion_personalizada_id: data.id, provincia: nuevaUbicacion.provincia.trim(), localidad: nuevaUbicacion.localidad.trim() || null, created_at: new Date().toISOString() }] } as UbicacionPersonalizada : item));
         toast({ title: 'Ubicación personalizada actualizada.' });
       } else {
         const { data, error } = await supabase.from('ubicaciones_personalizadas').insert({
@@ -778,7 +797,17 @@ export function ConfiguracionesClient({
           localidad: nuevaUbicacion.localidad.trim() || null,
         }).select().single();
         if (error) throw error;
-        setUbicacionesPersonalizadas((prev) => [...prev, data as UbicacionPersonalizada]);
+
+        const { error: errorMiembro } = await supabase.from('ubicacion_personalizada_miembros').insert({
+          ubicacion_personalizada_id: data.id,
+          provincia: nuevaUbicacion.provincia.trim(),
+          localidad: nuevaUbicacion.localidad.trim() || null,
+        });
+        if (errorMiembro && !/does not exist|relation .*ubicacion_personalizada_miembros.* does not exist/i.test(errorMiembro.message)) {
+          throw errorMiembro;
+        }
+
+        setUbicacionesPersonalizadas((prev) => [...prev, { ...data, ubicacion_personalizada_miembros: [{ id: crypto.randomUUID(), ubicacion_personalizada_id: data.id, provincia: nuevaUbicacion.provincia.trim(), localidad: nuevaUbicacion.localidad.trim() || null, created_at: new Date().toISOString() }] } as UbicacionPersonalizada]);
         toast({ title: 'Ubicación personalizada creada.' });
       }
       setNuevaUbicacion({ nombre: '', provincia: '', localidad: '' });
@@ -807,6 +836,72 @@ export function ConfiguracionesClient({
   function editarUbicacionPersonalizada(item: UbicacionPersonalizada) {
     setUbicacionEditandoId(item.id);
     setNuevaUbicacion({ nombre: item.nombre, provincia: item.provincia, localidad: item.localidad ?? '' });
+    setVistaActiva('ubicaciones');
+    setUbicacionSeleccionadaId(item.id);
+  }
+
+  const ubicacionSeleccionada = ubicacionesPersonalizadas.find((item) => item.id === ubicacionSeleccionadaId) ?? null;
+
+  const miembrosUbicacionSeleccionada = ubicacionSeleccionada
+    ? (Array.isArray(ubicacionSeleccionada.ubicacion_personalizada_miembros) && ubicacionSeleccionada.ubicacion_personalizada_miembros.length > 0
+      ? ubicacionSeleccionada.ubicacion_personalizada_miembros
+      : [{
+          id: ubicacionSeleccionada.id,
+          ubicacion_personalizada_id: ubicacionSeleccionada.id,
+          provincia: ubicacionSeleccionada.provincia,
+          localidad: ubicacionSeleccionada.localidad ?? null,
+          created_at: ubicacionSeleccionada.created_at,
+        }])
+    : [];
+
+  async function guardarMiembroUbicacion() {
+    if (!ubicacionSeleccionadaId || !nuevoMiembroUbicacion.provincia.trim()) return;
+    setGuardandoMiembroUbicacion(true);
+    try {
+      const payload = {
+        ubicacion_personalizada_id: ubicacionSeleccionadaId,
+        provincia: nuevoMiembroUbicacion.provincia.trim(),
+        localidad: nuevoMiembroUbicacion.localidad.trim() || null,
+      };
+
+      const { error } = await supabase.from('ubicacion_personalizada_miembros').upsert(payload, {
+        onConflict: 'ubicacion_personalizada_id,provincia,localidad',
+      });
+      if (error && !/does not exist|relation .*ubicacion_personalizada_miembros.* does not exist/i.test(error.message)) {
+        throw error;
+      }
+
+      const { data } = await supabase
+        .from('ubicaciones_personalizadas')
+        .select('*, ubicacion_personalizada_miembros(*)')
+        .eq('id', ubicacionSeleccionadaId)
+        .single();
+
+      if (data) {
+        setUbicacionesPersonalizadas((prev) => prev.map((item) => item.id === data.id ? (data as UbicacionPersonalizada) : item));
+        setUbicacionSeleccionadaId(data.id);
+      }
+      setNuevoMiembroUbicacion({ provincia: '', localidad: '' });
+      toast({ title: 'Miembro agregado.' });
+    } catch {
+      toast({ variant: 'destructive', title: 'No se pudo agregar la localidad.' });
+    } finally {
+      setGuardandoMiembroUbicacion(false);
+    }
+  }
+
+  async function eliminarMiembroUbicacion(miembroId: string) {
+    if (!miembroId) return;
+    const { error } = await supabase.from('ubicacion_personalizada_miembros').delete().eq('id', miembroId);
+    if (error) {
+      toast({ variant: 'destructive', title: 'No se pudo quitar la localidad.' });
+      return;
+    }
+
+    setUbicacionesPersonalizadas((prev) => prev.map((item) => item.id === ubicacionSeleccionadaId
+      ? { ...item, ubicacion_personalizada_miembros: (item.ubicacion_personalizada_miembros ?? []).filter((m) => m.id !== miembroId) }
+      : item));
+    toast({ title: 'Localidad quitada.' });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -815,7 +910,7 @@ export function ConfiguracionesClient({
       {/* Selector transporte */}
       <div className="bg-white border rounded-xl p-4 mb-6">
         <Label className="text-sm font-medium mb-2 block">Transporte</Label>
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <Select value={transporteId} onValueChange={(v) => { setTransporteId(v); cargar(v); }}>
             <SelectTrigger className="sm:max-w-sm">
               <SelectValue placeholder="Seleccionar transporte..." />
@@ -828,62 +923,116 @@ export function ConfiguracionesClient({
               ))}
             </SelectContent>
           </Select>
-          {transporteId && editar && <Button onClick={abrirNuevo} className="shrink-0"><Plus className="mr-2 h-4 w-4" />Agregar configuración</Button>}
-          {editar && <Button variant="outline" onClick={() => setImportarOpen(true)} className="shrink-0"><Upload className="mr-2 h-4 w-4" />Importar configuración</Button>}
+
+          <div className="flex flex-wrap items-center gap-2">
+            {transporteId && editar && <Button onClick={abrirNuevo} className="shrink-0"><Plus className="mr-2 h-4 w-4" />Agregar configuración</Button>}
+            <Button type="button" variant={vistaActiva === 'configuraciones' ? 'default' : 'outline'} onClick={() => setVistaActiva('configuraciones')}>Configuraciones</Button>
+            <Button type="button" variant={vistaActiva === 'ubicaciones' ? 'default' : 'outline'} onClick={() => setVistaActiva('ubicaciones')}>Ubicaciones personalizadas</Button>
+            {editar && <Button variant="outline" onClick={() => setImportarOpen(true)} className="shrink-0"><Upload className="mr-2 h-4 w-4" />Importar configuración</Button>}
+          </div>
         </div>
       </div>
 
-      <div className="bg-white border rounded-xl p-4 mb-6 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-slate-800">Crear ubicación</p>
-            <p className="text-xs text-muted-foreground">Usá rutas personalizadas para destinos no georreferenciados.</p>
-          </div>
-        </div>
-        <div className="grid gap-3 md:grid-cols-[1.2fr_1.5fr_1fr_auto]">
-          <Input value={nuevaUbicacion.nombre} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, nombre: event.target.value }))} placeholder="Nombre de la ubicación" />
-          <div className="min-w-0">
-            <GeorefCombobox
-              label="Provincia"
-              value={nuevaUbicacion.provincia ? { provincia: nuevaUbicacion.provincia, localidad: nuevaUbicacion.localidad || null } : null}
-              onChange={(ubicacion) => setNuevaUbicacion((prev) => ({ ...prev, provincia: ubicacion?.provincia ?? '', localidad: ubicacion?.localidad ?? prev.localidad }))}
-              placeholder="Seleccionar provincia..."
-              localidadOpcional
-              className="space-y-1"
-            />
-          </div>
-          <Input value={nuevaUbicacion.localidad} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, localidad: event.target.value }))} placeholder="Localidad (opcional)" />
-          <div className="flex gap-2">
-            <Button onClick={guardarUbicacionPersonalizada} disabled={guardandoUbicacion} variant="outline" className="flex-1">
-              {guardandoUbicacion ? <Loader2 className="h-4 w-4 animate-spin" /> : ubicacionEditandoId ? 'Actualizar' : 'Guardar'}
-            </Button>
-            {ubicacionEditandoId && (
-              <Button variant="ghost" onClick={() => { setUbicacionEditandoId(null); setNuevaUbicacion({ nombre: '', provincia: '', localidad: '' }); }} className="px-2">
-                Cancelar
+      {vistaActiva === 'ubicaciones' ? (
+        <div className="bg-white border rounded-xl p-4 mb-6">
+          <div className="mb-4 grid gap-3 md:grid-cols-[1.2fr_1.5fr_1fr_auto]">
+            <Input value={nuevaUbicacion.nombre} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, nombre: event.target.value }))} placeholder="Nombre de la ubicación" />
+            <div className="min-w-0">
+              <GeorefCombobox
+                label="Provincia"
+                value={nuevaUbicacion.provincia ? { provincia: nuevaUbicacion.provincia, localidad: nuevaUbicacion.localidad || null } : null}
+                onChange={(ubicacion) => setNuevaUbicacion((prev) => ({ ...prev, provincia: ubicacion?.provincia ?? '', localidad: ubicacion?.localidad ?? prev.localidad }))}
+                placeholder="Seleccionar provincia..."
+                localidadOpcional
+                className="space-y-1"
+              />
+            </div>
+            <Input value={nuevaUbicacion.localidad} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, localidad: event.target.value }))} placeholder="Localidad (opcional)" />
+            <div className="flex gap-2">
+              <Button onClick={guardarUbicacionPersonalizada} disabled={guardandoUbicacion} variant="outline" className="flex-1">
+                {guardandoUbicacion ? <Loader2 className="h-4 w-4 animate-spin" /> : ubicacionEditandoId ? 'Actualizar' : 'Guardar'}
               </Button>
-            )}
+              {ubicacionEditandoId && (
+                <Button variant="ghost" onClick={() => { setUbicacionEditandoId(null); setNuevaUbicacion({ nombre: '', provincia: '', localidad: '' }); }} className="px-2">
+                  Cancelar
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
-        {ubicacionesPersonalizadas.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {ubicacionesPersonalizadas.map((ubicacion) => (
-              <span key={ubicacion.id} className="inline-flex items-center gap-2 rounded-full border bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
-                <span>{ubicacion.provincia} ({ubicacion.nombre}){ubicacion.localidad ? ` · ${ubicacion.localidad}` : ''}</span>
-                {ubicacion.usuario_id === perfil.id && (
-                  <span className="flex items-center gap-1">
-                    <button type="button" onClick={() => editarUbicacionPersonalizada(ubicacion)} className="text-slate-500 hover:text-slate-700" aria-label={`Editar ${ubicacion.nombre}`}>
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button type="button" onClick={() => eliminarUbicacionPersonalizada(ubicacion.id)} className="text-red-500 hover:text-red-700" aria-label={`Eliminar ${ubicacion.nombre}`}>
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </span>
+
+          {ubicacionesPersonalizadas.length > 0 ? (
+            <div className="grid gap-4 xl:grid-cols-[0.9fr_1.4fr]">
+              <div className="space-y-2 rounded-lg border bg-slate-50 p-2">
+                {ubicacionesPersonalizadas.map((ubicacion) => (
+                  <button
+                    type="button"
+                    key={ubicacion.id}
+                    onClick={() => setUbicacionSeleccionadaId(ubicacion.id)}
+                    className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition ${ubicacionSeleccionadaId === ubicacion.id ? 'border-primary bg-white shadow-sm' : 'border-transparent bg-transparent hover:border-slate-200 hover:bg-white'}`}
+                  >
+                    <span className="font-medium text-slate-700">{ubicacion.nombre}</span>
+                    <span className="text-xs text-muted-foreground">{(ubicacion.ubicacion_personalizada_miembros ?? []).length || 1} miembro(s)</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="rounded-lg border bg-white p-3">
+                {ubicacionSeleccionada ? (
+                  <>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-base font-semibold text-slate-800">{ubicacionSeleccionada.nombre}</p>
+                        <p className="text-xs text-muted-foreground">{ubicacionSeleccionada.provincia}{ubicacionSeleccionada.localidad ? ` · ${ubicacionSeleccionada.localidad}` : ''}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => editarUbicacionPersonalizada(ubicacionSeleccionada)}><Pencil className="mr-1 h-3 w-3" />Editar</Button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => eliminarUbicacionPersonalizada(ubicacionSeleccionada.id)} className="text-red-600 hover:text-red-700"><Trash2 className="mr-1 h-3 w-3" />Eliminar</Button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-[1.3fr_1fr_auto]">
+                      <div className="min-w-0">
+                        <GeorefCombobox
+                          label="Nueva provincia"
+                          value={nuevoMiembroUbicacion.provincia ? { provincia: nuevoMiembroUbicacion.provincia, localidad: nuevoMiembroUbicacion.localidad || null } : null}
+                          onChange={(ubicacion) => setNuevoMiembroUbicacion((prev) => ({ ...prev, provincia: ubicacion?.provincia ?? '', localidad: ubicacion?.localidad ?? prev.localidad }))}
+                          placeholder="Seleccionar provincia..."
+                          localidadOpcional
+                          className="space-y-1"
+                        />
+                      </div>
+                      <Input value={nuevoMiembroUbicacion.localidad} onChange={(event) => setNuevoMiembroUbicacion((prev) => ({ ...prev, localidad: event.target.value }))} placeholder="Localidad" />
+                      <Button type="button" onClick={guardarMiembroUbicacion} disabled={guardandoMiembroUbicacion} variant="outline">
+                        {guardandoMiembroUbicacion ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Agregar'}
+                      </Button>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      {miembrosUbicacionSeleccionada.map((miembro) => (
+                        <div key={miembro.id} className="flex items-center justify-between gap-2 rounded-md border bg-slate-50 px-3 py-2 text-sm">
+                          <span>{miembro.provincia}{miembro.localidad ? ` · ${miembro.localidad}` : ''}</span>
+                          <button type="button" onClick={() => eliminarMiembroUbicacion(miembro.id)} className="text-red-500 hover:text-red-700" aria-label="Eliminar miembro">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Seleccioná una ubicación para ver y editar sus provincias/localidades asociadas.</p>
                 )}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed bg-slate-50 p-5 text-sm text-muted-foreground">
+              Todavía no hay ubicaciones personalizadas. Creá la primera arriba para empezar a sumar localidades.
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {vistaActiva === 'configuraciones' && (
+      <>
 
       {/* Lista */}
       {!transporteId ? (
@@ -1695,7 +1844,9 @@ export function ConfiguracionesClient({
 
       <ImportarConfiguracionDialog open={importarOpen} onOpenChange={setImportarOpen} transportes={transportesParaImportar} onImported={finalizarImportacion} />
     </>
-  );
+  )}
+  </>
+);
 }
 
 // ─── Sub-componente TramoSection ───────────────────────────────────────────────

@@ -279,6 +279,13 @@ interface GeorefComboboxProps {
     nombre: string;
     provincia: string;
     localidad: string | null;
+    ubicacion_personalizada_id?: string;
+    ubicacion_personalizada_miembros?: Array<{
+      id: string;
+      ubicacion_personalizada_id: string;
+      provincia: string;
+      localidad: string | null;
+    }>;
   }>;
 }
 
@@ -372,26 +379,63 @@ export function GeorefCombobox({
   }, [value, onChange]);
 
   const customProvItems = (personalizadas ?? [])
-    .filter((item) => {
-      const q = busquedaProv.trim();
-      if (!q) return true;
-      const hayCoincidencia =
-        item.provincia.toLowerCase().includes(q.toLowerCase()) ||
-        item.nombre.toLowerCase().includes(q.toLowerCase());
-      return hayCoincidencia;
+    .flatMap((item) => {
+      const miembros = Array.isArray(item.ubicacion_personalizada_miembros) && item.ubicacion_personalizada_miembros.length > 0
+        ? item.ubicacion_personalizada_miembros
+        : [{ id: item.id, ubicacion_personalizada_id: item.id, provincia: item.provincia, localidad: item.localidad ?? null }];
+
+      return miembros.map((miembro) => {
+        const q = busquedaProv.trim();
+        const qNorm = q ? q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') : '';
+        const a = (value: string | null | undefined) =>
+          (value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+        const labelBase = `${miembro.provincia} (${item.nombre})`;
+        const directLabel = labelBase;
+        const combinedLabel = miembro.localidad && miembro.localidad.trim() !== ''
+          ? `${labelBase} - ${miembro.localidad}`
+          : null;
+
+        const directMatches = !qNorm || a(miembro.provincia).includes(qNorm) || a(item.nombre).includes(qNorm);
+        const combinedMatches = !!combinedLabel && (
+          !qNorm ||
+          a(miembro.localidad ?? '').includes(qNorm) ||
+          a(miembro.provincia).includes(qNorm) ||
+          a(item.nombre).includes(qNorm)
+        );
+
+        const results: Array<{ id: string; label: string; nombre: string; provincia: string; localidad: string | null }> = [];
+        if (directMatches) {
+          results.push({
+            id: item.id,
+            label: directLabel,
+            nombre: item.nombre,
+            provincia: miembro.provincia,
+            localidad: miembro.localidad ?? null,
+          });
+        }
+        if (combinedLabel && combinedMatches) {
+          results.push({
+            id: item.id,
+            label: combinedLabel,
+            nombre: item.nombre,
+            provincia: miembro.provincia,
+            localidad: miembro.localidad ?? null,
+          });
+        }
+        return results;
+      });
     })
-    .map((item) => ({
-      id: item.id,
-      label: `${item.provincia} (${item.nombre})`,
-    }));
+    .flat()
+    .filter((item, index, arr) => arr.findIndex((candidate) => candidate.label === item.label && candidate.id === item.id && candidate.provincia === item.provincia && candidate.localidad === item.localidad) === index);
 
   const provinciasItems = [
     ...provincias.map((p) => ({ id: p.id, label: p.nombre })),
-    ...customProvItems,
+    ...customProvItems.map((item) => ({ id: item.id, label: item.label })),
   ];
   const localidadesItems = localidades.map((l) => ({ id: l.id, label: l.nombre }));
   const valorVisible = value?.tipo === 'personalizada' && value.nombre
-    ? `${value.provincia} (${value.nombre})`
+    ? (value.localidad ? `${value.provincia} (${value.nombre}) - ${value.localidad}` : `${value.provincia} (${value.nombre})`)
     : value?.provincia ?? '';
 
   return (
@@ -408,9 +452,7 @@ export function GeorefCombobox({
         inputValue={busquedaProv}
         onInputChange={setBusquedaProv}
         onSelect={(nombre) => {
-          const custom = (personalizadas ?? []).find(
-            (item) => `${item.provincia} (${item.nombre})` === nombre
-          );
+          const custom = customProvItems.find((item) => item.label === nombre);
           if (custom) {
             onChange({
               provincia: custom.provincia,

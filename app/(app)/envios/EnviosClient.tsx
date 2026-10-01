@@ -13,6 +13,7 @@ import {
   calcularRanking,
   formatearPrecio,
   formatearTiempo,
+  normalizarUbicacion,
   type ConfiguracionConDatos,
 } from '@/lib/calculos/envios';
 import type {
@@ -108,7 +109,9 @@ function formatearUbicacionPersonalizada(
 
   if (!provincia) return 'Sin ubicación';
   if (nombre) {
-    return `${provincia} (${nombre})${localidad ? ` · ${localidad}` : ''}`;
+    return localidad
+      ? `${provincia} - ${localidad} (${nombre})`
+      : `${provincia} (${nombre})`;
   }
   if (provincia && localidad) return `${provincia} · ${localidad}`;
   return provincia;
@@ -179,7 +182,7 @@ export function EnviosClient({
     async function cargarDatosUsuario() {
       try {
         const [{ data: ubicaciones }, { data: contenedoresData }] = await Promise.all([
-          supabase.from('ubicaciones_personalizadas').select('*').order('nombre'),
+          supabase.from('ubicaciones_personalizadas').select('*, ubicacion_personalizada_miembros(*)').order('nombre'),
           supabase.from('contenedores').select('*').eq('usuario_id', perfil.id).order('created_at', { ascending: false }),
         ]);
         setUbicacionesPersonalizadas((ubicaciones ?? []) as UbicacionPersonalizada[]);
@@ -327,12 +330,51 @@ export function EnviosClient({
         tagCantidades,
       };
       const configs = configuracionesRaw as ConfiguracionConDatos[];
-      const candidatos = filtrarConfiguraciones(configs, busqueda, gruposMiembros);
+      const candidatosGenerales = filtrarConfiguraciones(configs, busqueda, gruposMiembros);
+      const miembrosDestino = destino?.tipo === 'personalizada' || !destino?.localidad
+        ? []
+        : ubicacionesPersonalizadas.filter((ubicacion) =>
+            (ubicacion.ubicacion_personalizada_miembros ?? []).some((miembro) =>
+              normalizarUbicacion(miembro.provincia) === normalizarUbicacion(destino.provincia) &&
+              normalizarUbicacion(miembro.localidad) === normalizarUbicacion(destino.localidad)
+            )
+          );
+      const candidatosPorTransporte = new Map<string, ConfiguracionConDatos>();
+      const destinosPersonalizados = new Map<string, UbicacionSeleccionada>();
+
+      for (const ubicacion of miembrosDestino) {
+        const destinoPersonalizado: UbicacionSeleccionada = {
+          provincia: destino!.provincia,
+          localidad: destino!.localidad,
+          id: ubicacion.id,
+          nombre: ubicacion.nombre,
+          tipo: 'personalizada',
+        };
+        const candidatosPersonalizados = filtrarConfiguraciones(configs, {
+          ...busqueda,
+          destino: destinoPersonalizado,
+        }, gruposMiembros);
+
+        for (const config of candidatosPersonalizados) {
+          if (!candidatosPorTransporte.has(config.transporte_id)) {
+            candidatosPorTransporte.set(config.transporte_id, config);
+            destinosPersonalizados.set(config.id, destinoPersonalizado);
+          }
+        }
+      }
+
+      for (const config of candidatosGenerales) {
+        if (!candidatosPorTransporte.has(config.transporte_id)) {
+          candidatosPorTransporte.set(config.transporte_id, config);
+        }
+      }
+
+      const candidatos = Array.from(candidatosPorTransporte.values());
       const conPrecios = candidatos.map((config) => ({
         config,
         desglose: calcularPrecio(config, busqueda),
         origenSeleccionado: origen,
-        destinoSeleccionado: destino,
+        destinoSeleccionado: destinosPersonalizados.get(config.id) ?? destino,
         cantidadBultos: totalBultos,
         cantidadPallets: totalPallets,
         cantidadKg: totalKg,
@@ -363,7 +405,7 @@ export function EnviosClient({
     } finally {
       setBuscando(false);
     }
-  }, [origen, origenSucursalId, destino, totalBultos, totalPallets, totalKg, totalCamionCompleto, incluyeBultos, cantBultosStr, incluyePallets, cantPallets, incluyeKg, cantKgStr, camionCompleto, soloPeritoneal, filtroTags, tagCantidades, configuracionesRaw, gruposMiembros, toast]);
+  }, [origen, origenSucursalId, destino, totalBultos, totalPallets, totalKg, totalCamionCompleto, incluyeBultos, cantBultosStr, incluyePallets, cantPallets, incluyeKg, cantKgStr, camionCompleto, soloPeritoneal, filtroTags, tagCantidades, configuracionesRaw, gruposMiembros, ubicacionesPersonalizadas, toast]);
 
   // ── Ordenar / filtrar resultados ───────────────────────────────────────────
   const resultadosOrdenados = useMemo(() => {
