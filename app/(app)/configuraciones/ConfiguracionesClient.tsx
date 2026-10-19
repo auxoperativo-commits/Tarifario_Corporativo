@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/layout/EmptyState';
 import { formatearPrecio, normalizarUbicacion } from '@/lib/calculos/envios';
 import { parsearNumeroLocal } from '@/lib/numeros';
 import { ImportarConfiguracionDialog } from './ImportarConfiguracionDialog';
+import { ActualizacionPrecios } from './ActualizacionPrecios';
 import type {
   Transporte, Tag, Caracteristica, ServicioTransporte, ConfiguracionEnvio,
   TarifaBulto, TarifaPallet, TarifaKg, TagPrecio, UbicacionSeleccionada, UbicacionPersonalizada, Sucursal, GrupoSucursales, GrupoSucursalesMiembros,
@@ -214,7 +215,7 @@ export function ConfiguracionesClient({
   const [nuevaUbicacion, setNuevaUbicacion] = useState({ nombre: '', provincia: '', localidad: '' });
   const [ubicacionEditandoId, setUbicacionEditandoId] = useState<string | null>(null);
   const [guardandoUbicacion, setGuardandoUbicacion] = useState(false);
-  const [vistaActiva, setVistaActiva] = useState<'configuraciones' | 'ubicaciones'>('configuraciones');
+  const [vistaActiva, setVistaActiva] = useState<'configuraciones' | 'ubicaciones' | 'precios'>('configuraciones');
   const [ubicacionSeleccionadaId, setUbicacionSeleccionadaId] = useState<string | null>(null);
   const [nuevoMiembroUbicacion, setNuevoMiembroUbicacion] = useState({ provincia: '', localidad: '' });
   const [guardandoMiembroUbicacion, setGuardandoMiembroUbicacion] = useState(false);
@@ -928,12 +929,15 @@ export function ConfiguracionesClient({
             {transporteId && editar && <Button onClick={abrirNuevo} className="shrink-0"><Plus className="mr-2 h-4 w-4" />Agregar configuración</Button>}
             <Button type="button" variant={vistaActiva === 'configuraciones' ? 'default' : 'outline'} onClick={() => setVistaActiva('configuraciones')}>Configuraciones</Button>
             <Button type="button" variant={vistaActiva === 'ubicaciones' ? 'default' : 'outline'} onClick={() => setVistaActiva('ubicaciones')}>Ubicaciones personalizadas</Button>
+            {perfil.rol === 'admin' && <Button type="button" variant={vistaActiva === 'precios' ? 'default' : 'outline'} onClick={() => setVistaActiva('precios')}>Actualización de precios</Button>}
             {editar && <Button variant="outline" onClick={() => setImportarOpen(true)} className="shrink-0"><Upload className="mr-2 h-4 w-4" />Importar configuración</Button>}
           </div>
         </div>
       </div>
 
-      {vistaActiva === 'ubicaciones' ? (
+      {vistaActiva === 'precios' && perfil.rol === 'admin' ? (
+        <ActualizacionPrecios />
+      ) : vistaActiva === 'ubicaciones' ? (
         <div className="bg-white border rounded-xl p-4 mb-6">
           <div className="mb-4 grid gap-3 md:grid-cols-[1.2fr_1.5fr_1fr_auto]">
             <Input value={nuevaUbicacion.nombre} onChange={(event) => setNuevaUbicacion((prev) => ({ ...prev, nombre: event.target.value }))} placeholder="Nombre de la ubicación" />

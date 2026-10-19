@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:precio-masivo": "node --test tests/precio-masivo.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

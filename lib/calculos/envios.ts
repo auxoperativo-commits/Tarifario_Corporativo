@@ -206,8 +206,10 @@ export function filtrarConfiguraciones(
 
   const validas = matcheadoras.filter(cumpleRequisitos);
 
-  // Con búsqueda solo por provincia, conservar todas las localidades configuradas.
-  if (origen.localidad === null && destino.localidad === null) {
+  // Una búsqueda por provincia de destino debe conservar todas sus configuraciones,
+  // aunque el origen haya sido seleccionado con localidad o sucursal.
+  // Las ubicaciones personalizadas directas mantienen su resolución actual.
+  if (destino.localidad === null && destino.tipo !== 'personalizada') {
     return validas;
   }
 

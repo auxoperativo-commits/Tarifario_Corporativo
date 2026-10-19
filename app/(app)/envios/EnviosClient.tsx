@@ -331,6 +331,7 @@ export function EnviosClient({
       };
       const configs = configuracionesRaw as ConfiguracionConDatos[];
       const candidatosGenerales = filtrarConfiguraciones(configs, busqueda, gruposMiembros);
+      const busquedaSoloProvincia = destino?.localidad === null && destino.tipo !== 'personalizada';
       const miembrosDestino = destino?.tipo === 'personalizada' || !destino?.localidad
         ? []
         : ubicacionesPersonalizadas.filter((ubicacion) =>
@@ -339,37 +340,45 @@ export function EnviosClient({
               normalizarUbicacion(miembro.localidad) === normalizarUbicacion(destino.localidad)
             )
           );
-      const candidatosPorTransporte = new Map<string, ConfiguracionConDatos>();
+      let candidatos: ConfiguracionConDatos[];
       const destinosPersonalizados = new Map<string, UbicacionSeleccionada>();
 
-      for (const ubicacion of miembrosDestino) {
-        const destinoPersonalizado: UbicacionSeleccionada = {
-          provincia: destino!.provincia,
-          localidad: destino!.localidad,
-          id: ubicacion.id,
-          nombre: ubicacion.nombre,
-          tipo: 'personalizada',
-        };
-        const candidatosPersonalizados = filtrarConfiguraciones(configs, {
-          ...busqueda,
-          destino: destinoPersonalizado,
-        }, gruposMiembros);
+      if (busquedaSoloProvincia) {
+        // Cada configuración coincidente es una tarjeta independiente, incluso
+        // cuando varias pertenecen al mismo transporte.
+        candidatos = candidatosGenerales;
+      } else {
+        const candidatosPorTransporte = new Map<string, ConfiguracionConDatos>();
 
-        for (const config of candidatosPersonalizados) {
-          if (!candidatosPorTransporte.has(config.transporte_id)) {
-            candidatosPorTransporte.set(config.transporte_id, config);
-            destinosPersonalizados.set(config.id, destinoPersonalizado);
+        for (const ubicacion of miembrosDestino) {
+          const destinoPersonalizado: UbicacionSeleccionada = {
+            provincia: destino!.provincia,
+            localidad: destino!.localidad,
+            id: ubicacion.id,
+            nombre: ubicacion.nombre,
+            tipo: 'personalizada',
+          };
+          const candidatosPersonalizados = filtrarConfiguraciones(configs, {
+            ...busqueda,
+            destino: destinoPersonalizado,
+          }, gruposMiembros);
+
+          for (const config of candidatosPersonalizados) {
+            if (!candidatosPorTransporte.has(config.transporte_id)) {
+              candidatosPorTransporte.set(config.transporte_id, config);
+              destinosPersonalizados.set(config.id, destinoPersonalizado);
+            }
           }
         }
-      }
 
-      for (const config of candidatosGenerales) {
-        if (!candidatosPorTransporte.has(config.transporte_id)) {
-          candidatosPorTransporte.set(config.transporte_id, config);
+        for (const config of candidatosGenerales) {
+          if (!candidatosPorTransporte.has(config.transporte_id)) {
+            candidatosPorTransporte.set(config.transporte_id, config);
+          }
         }
-      }
 
-      const candidatos = Array.from(candidatosPorTransporte.values());
+        candidatos = Array.from(candidatosPorTransporte.values());
+      }
       const conPrecios = candidatos.map((config) => ({
         config,
         desglose: calcularPrecio(config, busqueda),
