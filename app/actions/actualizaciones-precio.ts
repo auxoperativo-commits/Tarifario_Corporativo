@@ -18,6 +18,44 @@ export async function obtenerCatalogoPrecios() {
   return dbError ? { error: dbError.message } : { data: data ?? [] };
 }
 
+export async function cargarInicioActualizacionPrecios(incluirTransportes: boolean) {
+  const { supabase, error } = await requireAdmin();
+  if (error) return { error };
+
+  const [catalogo, historial, transportes] = await Promise.all([
+    supabase.from('catalogo_campos_precio').select('*').eq('activo', true).order('concepto'),
+    supabase.from('actualizaciones_precio')
+      .select('*, perfiles_usuario!actualizaciones_precio_usuario_id_fkey(nombre_completo)')
+      .order('created_at', { ascending: false }).limit(100),
+    incluirTransportes
+      ? supabase.from('transportes').select('id, razon_social, nombre_fantasia')
+        .eq('activo', true).order('razon_social').limit(1001)
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+
+  const dbError = catalogo.error ?? historial.error ?? transportes.error;
+  if (dbError) return { error: dbError.message };
+  return {
+    data: {
+      catalogo: catalogo.data ?? [],
+      historial: historial.data ?? [],
+      ...(incluirTransportes ? {
+        transportes: transportes.data ?? [],
+      } : {}),
+    },
+  };
+}
+
+export async function revalidarTransportesActivosPrecios() {
+  const { supabase, error } = await requireAdmin();
+  if (error) return { error };
+  const { data, error: dbError } = await supabase.from('transportes')
+    .select('id, razon_social, nombre_fantasia').eq('activo', true).order('razon_social').limit(1001);
+  if (dbError) return { error: dbError.message };
+  const transportes = data ?? [];
+  return { data: { transportes, buscarEnServidor: transportes.length > 1000 } };
+}
+
 export async function obtenerHistorialPrecios() {
   const { supabase, error } = await requireAdmin();
   if (error) return { error };
