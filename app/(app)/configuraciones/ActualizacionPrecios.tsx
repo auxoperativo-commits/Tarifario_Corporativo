@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
@@ -14,6 +15,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { ToastAction } from '@/components/ui/toast';
+import { TransportesPickerView } from '@/components/transportes/TransportesPickerView';
 import { aplicarPrecios, cargarInicioActualizacionPrecios, obtenerCatalogoPrecios, obtenerDetalleActualizacion, previsualizarPrecios, revalidarTransportesActivosPrecios, revertirPrecios } from '@/app/actions/actualizaciones-precio';
 
 type Config = {
@@ -25,7 +28,7 @@ type Config = {
 };
 type TransporteOpcion = { id: string; razon_social: string; nombre_fantasia: string | null };
 type Catalogo = { concepto: string; etiqueta: string; tabla: string; columna_precio: string; columna_configuracion_id: string };
-type Precio = { concepto: string; etiqueta: string; tabla: string; columna_precio: string; registro_id: string; configuracion_id: string; precio_anterior: number; precio_nuevo: number; diferencia: number; variacion_porcentual: number | null };
+type Precio = { concepto: string; etiqueta: string; tabla: string; columna_precio: string; registro_id: string; configuracion_id: string | null; transporte_id?: string | null; precio_anterior: number; precio_nuevo: number; diferencia: number; variacion_porcentual: number | null };
 type PrecioEjemplo = { configuracion_id: string; concepto: string; etiqueta: string; precio: number };
 type Historial = { id: string; tipo_ajuste: string; valor: number; redondeo: number; conceptos: string[]; nota: string | null; cantidad_configuraciones: number; cantidad_precios_modificados: number; created_at: string; revertida_at: string | null; perfiles_usuario?: { nombre_completo: string | null } | null; actualizaciones_precio_detalle?: Precio[] };
 
@@ -78,6 +81,15 @@ export function ActualizacionPrecios() {
   const [nota, setNota] = useState('');
   const [preview, setPreview] = useState<{ items: Precio[]; cantidad_configuraciones: number; cantidad_precios: number; bloqueantes: number; advertencias: number } | null>(null);
   const supabase = createClient();
+  const router = useRouter();
+
+  function urlHistorial(transportes: string[], fechaBase = new Date(), fechaHasta = new Date()) {
+    const unique = Array.from(new Set(transportes));
+    const start = new Date(fechaBase); start.setMonth(start.getMonth() - 3);
+    const asDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const params = new URLSearchParams({ tab: 'precios', transportes: unique.slice(0,10).join(','), desde: asDate(start), hasta: asDate(fechaHasta) });
+    return { href: `/movimientos?${params.toString()}`, omitted: Math.max(0, unique.length - 10) };
+  }
 
   async function cargarCatalogo() {
     setCatalogoCargando(true);
@@ -235,6 +247,7 @@ export function ActualizacionPrecios() {
   const previewGroups = useMemo(() => {
     const groups = new Map<string, { configuracionId: string; items: Precio[] }>();
     for (const item of preview?.items ?? []) {
+      if (!item.configuracion_id) continue;
       const group = groups.get(item.configuracion_id) ?? { configuracionId: item.configuracion_id, items: [] };
       group.items.push(item);
       groups.set(item.configuracion_id, group);
@@ -426,11 +439,13 @@ export function ActualizacionPrecios() {
 
   async function aplicar() {
     if (!preview) return;
+    const affectedTransportes = Array.from(new Set(configs.filter((c) => selected.has(c.id)).map((c) => c.transporte_id)));
     setSaving(true);
     const result = await aplicarPrecios({ configuracionIds: Array.from(selected), tipo, valor: direccion === 'aumentar' ? Number(valor) : -Number(valor), redondeo: Number(redondeo), conceptos, incluirInactivas, nota });
     setSaving(false); setConfirmOpen(false);
     if (result.error) { toast({ variant: 'destructive', title: result.error }); return; }
-    toast({ title: 'Actualización aplicada', description: `Se modificaron ${preview.cantidad_precios} precios.` });
+    const history = urlHistorial(affectedTransportes);
+    toast({ title: 'Actualización aplicada', description: `Se modificaron ${preview.cantidad_precios} precios.${history.omitted ? ` El historial abre los primeros 10 transportes; se omitieron ${history.omitted}.` : ''}`, action: <ToastAction altText="Ver historial en Movimientos" onClick={() => router.push(history.href)}>Ver historial</ToastAction> });
     setPaso(1); setPreview(null); setSelected(new Set()); await cargar();
   }
 
@@ -439,7 +454,10 @@ export function ActualizacionPrecios() {
     if (result.error) { toast({ variant: 'destructive', title: result.error }); return; }
     const data = result.data as { ok: boolean; conflictos?: unknown[] };
     if (!data.ok) { setConflictos(data.conflictos ?? []); return; }
-    toast({ title: 'Actualización revertida.' }); await cargar();
+    const detail = await obtenerDetalleActualizacion(item.id);
+    const transportIds = ((detail.data ?? []) as Precio[]).map((row) => row.transporte_id).filter((id): id is string => Boolean(id));
+    const history = urlHistorial(transportIds, new Date(item.created_at), new Date());
+    toast({ title: 'Actualización revertida.', description: history.omitted ? `El historial abre los primeros 10 transportes; se omitieron ${history.omitted}.` : undefined, action: <ToastAction altText="Ver historial en Movimientos" onClick={() => router.push(history.href)}>Ver historial</ToastAction> }); await cargar();
   }
 
   async function toggleDetalle(item: Historial) {
@@ -477,13 +495,10 @@ export function ActualizacionPrecios() {
     {paso === 1 && <Card><CardHeader><CardTitle>Seleccionar configuraciones</CardTitle></CardHeader><CardContent className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="buscar-transporte-precios">Transporte</Label>
-        <Input id="buscar-transporte-precios" role="combobox" aria-expanded={busquedaTransporte.trim().length >= 1} aria-controls="sugerencias-transportes-precios" aria-autocomplete="list" autoComplete="off" value={busquedaTransporte} onChange={(e) => setBusquedaTransporte(e.target.value)} placeholder={cargandoTransportes ? 'Cargando transportes...' : 'Buscá un transporte para empezar'} />
-        {cargandoTransportes && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Cargando transportes...</p>}
-        {buscandoTransportes && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Buscando...</p>}
-        {transportesError && <div role="alert" className="space-y-2 text-sm text-destructive"><p>{transportesError}</p><Button type="button" variant="outline" size="sm" onClick={() => void cargar()}>Reintentar carga</Button></div>}
-        {!buscandoTransportes && !transportesError && busquedaTransporte.trim().length >= 1 && sugerenciasTransporte.length === 0 && <p className="text-sm text-muted-foreground">Sin resultados</p>}
-        {sugerenciasTransporte.length > 0 && <ul id="sugerencias-transportes-precios" role="listbox" className="max-h-52 overflow-auto rounded-md border">{sugerenciasTransporte.map((item) => <li key={item.id} role="option" aria-selected="false"><button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => void seleccionarTransporte(item)}>{item.nombre_fantasia || item.razon_social}{item.nombre_fantasia && <span className="ml-2 text-muted-foreground">{item.razon_social}</span>}</button></li>)}</ul>}
-        {transportesElegidos.length > 0 && <div className="flex flex-wrap gap-2" aria-label="Transportes elegidos">{transportesElegidos.map((item) => <Badge key={item.id} variant="secondary" className="gap-2 py-1">{item.nombre_fantasia || item.razon_social}<button type="button" aria-label={`Quitar ${item.nombre_fantasia || item.razon_social}`} className="rounded-full hover:text-destructive" onClick={() => quitarTransporte(item.id)}>×</button></Badge>)}</div>}
+        <TransportesPickerView id="buscar-transporte-precios" query={busquedaTransporte} onQuery={setBusquedaTransporte}
+          suggestions={sugerenciasTransporte} selected={transportesElegidos} loading={cargandoTransportes}
+          searching={buscandoTransportes} error={transportesError} onSelect={(item) => void seleccionarTransporte(item)}
+          onRemove={quitarTransporte} onRetry={() => void cargar()} />
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div><Label>Origen (sucursal o grupo)</Label><Input value={filtros.origen} onChange={(e) => { setPage(0); setFiltros({ ...filtros, origen: e.target.value }); }} placeholder="Provincia, localidad o nombre" /></div>
@@ -561,7 +576,7 @@ export function ActualizacionPrecios() {
       <div className="flex justify-between"><Button variant="outline" onClick={() => setPaso(2)}>Volver a editar</Button><Button variant="destructive" disabled={preview.bloqueantes > 0 || !preview.cantidad_precios} onClick={() => setConfirmOpen(true)}>Aplicar actualización</Button></div>
     </CardContent></Card>}
 
-    <Card><CardHeader><CardTitle>Historial de actualizaciones</CardTitle></CardHeader><CardContent className="space-y-2">{historial.map((h) => <div key={h.id} className="rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-3"><button className="text-left" onClick={() => void toggleDetalle(h)}><span className="font-medium">{fmtDate(h.created_at)} · {h.perfiles_usuario?.nombre_completo ?? 'Usuario'}</span><div className="text-sm text-muted-foreground">{h.tipo_ajuste === 'porcentaje' ? 'Porcentaje' : 'Monto fijo'} {h.valor > 0 ? '+' : ''}{h.valor} · {h.redondeo ? `Redondeo al múltiplo de ${h.redondeo}` : 'Sin redondeo'} · {h.conceptos.map((c) => LABELS[c] ?? c).join(', ')} · {h.cantidad_configuraciones} configuraciones / {h.cantidad_precios_modificados} precios</div>{h.nota && <div className="text-sm">{h.nota}</div>}</button><div className="flex items-center gap-2"><Badge variant={h.revertida_at ? 'outline' : 'secondary'}>{h.revertida_at ? 'Revertida' : 'Aplicada'}</Badge>{!h.revertida_at && <Button size="sm" variant="outline" disabled={saving} onClick={() => void deshacer(h)}>Deshacer</Button>}</div></div>{detalle?.id === h.id && <div className="mt-3 max-h-64 overflow-auto border-t pt-2 text-sm">{!detalle.actualizaciones_precio_detalle?.length && <p className="py-2 text-muted-foreground">Cargando o sin detalles.</p>}{(detalle.actualizaciones_precio_detalle ?? []).map((d, i) => <div key={i} className="flex flex-wrap justify-between gap-2 border-b py-1"><span>{LABELS[d.concepto] ?? d.concepto} · {d.tabla}.{d.columna_precio}</span><span>{formatearPrecio(d.precio_anterior)} → {formatearPrecio(d.precio_nuevo)}</span></div>)}</div>}</div>)}{!historial.length && <p className="text-sm text-muted-foreground">Todavía no hay actualizaciones.</p>}</CardContent></Card>
+    <Card><CardHeader><CardTitle>Historial de actualizaciones</CardTitle></CardHeader><CardContent className="space-y-2">{historial.map((h) => <div key={h.id} className="rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-3"><button className="text-left" onClick={() => void toggleDetalle(h)}><span className="font-medium">{fmtDate(h.created_at)} · {h.perfiles_usuario?.nombre_completo ?? 'Usuario'}</span><div className="text-sm text-muted-foreground">{h.tipo_ajuste === 'porcentaje' ? 'Porcentaje' : 'Monto fijo'} {h.valor > 0 ? '+' : ''}{h.valor} · {h.redondeo ? `Redondeo al múltiplo de ${h.redondeo}` : 'Sin redondeo'} · {h.conceptos.map((c) => LABELS[c] ?? c).join(', ')} · {h.cantidad_configuraciones} configuraciones / {h.cantidad_precios_modificados} precios</div>{h.nota && <div className="text-sm">{h.nota}</div>}</button><div className="flex items-center gap-2"><Badge variant={h.revertida_at ? 'outline' : 'secondary'}>{h.revertida_at ? 'Revertida' : 'Aplicada'}</Badge>{!h.revertida_at && <Button size="sm" variant="outline" disabled={saving} onClick={() => void deshacer(h)}>Deshacer</Button>}</div></div>{detalle?.id === h.id && <div className="mt-3 max-h-64 overflow-auto border-t pt-2 text-sm">{!detalle.actualizaciones_precio_detalle?.length && <p className="py-2 text-muted-foreground">Cargando o sin detalles.</p>}{(detalle.actualizaciones_precio_detalle ?? []).map((d, i) => <div key={i} className="flex flex-wrap justify-between gap-2 border-b py-1"><span>{LABELS[d.concepto] ?? d.concepto} · {d.tabla}.{d.columna_precio}{d.configuracion_id ? '' : ' · configuración eliminada'}</span><span>{formatearPrecio(d.precio_anterior)} → {formatearPrecio(d.precio_nuevo)}</span></div>)}</div>}</div>)}{!historial.length && <p className="text-sm text-muted-foreground">Todavía no hay actualizaciones.</p>}</CardContent></Card>
 
     <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Confirmar actualización</AlertDialogTitle><AlertDialogDescription>Vas a modificar {preview?.cantidad_precios ?? 0} precios en {preview?.cantidad_configuraciones ?? 0} configuraciones. ¿Confirmar?</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction disabled={saving} onClick={(e) => { e.preventDefault(); void aplicar(); }}>{saving ? 'Aplicando…' : 'Confirmar'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={conflictos.length > 0} onOpenChange={(open) => !open && setConflictos([])}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>No se puede deshacer sin sobrescribir cambios</AlertDialogTitle><AlertDialogDescription>Estos precios ya no coinciden con el valor aplicado. No se modificó ningún registro.</AlertDialogDescription></AlertDialogHeader><div className="max-h-60 overflow-auto text-xs">{conflictos.map((x, i) => <pre key={i} className="whitespace-pre-wrap border-b py-2">{JSON.stringify(x)}</pre>)}</div><AlertDialogFooter><AlertDialogCancel>Cerrar</AlertDialogCancel></AlertDialogFooter></AlertDialogContent></AlertDialog>

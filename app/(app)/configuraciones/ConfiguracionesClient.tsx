@@ -631,7 +631,6 @@ export function ConfiguracionesClient({
       // tags + precios de tag
       await supabase.from('configuracion_tags').delete().eq('configuracion_id', configId);
       // Borrar precios de tag anteriores de esta configuración
-      try { await supabase.from('configuracion_tag_precios').delete().eq('configuracion_id', configId); } catch { /* tabla opcional */ }
       if (form.tagIds.length > 0) {
         await supabase.from('configuracion_tags').insert(
           form.tagIds.map((tag_id) => ({ configuracion_id: configId, tag_id }))
@@ -659,7 +658,8 @@ export function ConfiguracionesClient({
           .filter((item): item is NonNullable<typeof item> => item !== null);
         if (tagPreciosParaGuardar.length > 0) {
           try {
-            await supabase.from('configuracion_tag_precios').insert(tagPreciosParaGuardar);
+            const { error } = await supabase.from('configuracion_tag_precios').upsert(tagPreciosParaGuardar, { onConflict: 'configuracion_id,tag_id' });
+            if (error) throw error;
           } catch {
             console.warn('configuracion_tag_precios no encontrada. Ejecutar supabase/migrations/07_tag_precios.sql');
           }
@@ -667,6 +667,19 @@ export function ConfiguracionesClient({
       }
 
       // características de transporte (delete-then-insert, sin precios)
+      try {
+        const tagIdsConPrecio = form.tagIds.filter((tag_id) => {
+          const p = form.tagPrecios[tag_id];
+          return !!p && [p.bulto, p.pallet, p.kg, p.camion_completo].some((v) => v !== '' && parsearNumeroLocal(v) !== null);
+        });
+        let quitarTags = supabase.from('configuracion_tag_precios').delete().eq('configuracion_id', configId);
+        if (tagIdsConPrecio.length) quitarTags = quitarTags.not('tag_id', 'in', `(${tagIdsConPrecio.join(',')})`);
+        const { error: errorTags } = await quitarTags;
+        if (errorTags) throw errorTags;
+      } catch {
+        console.warn('No se pudieron limpiar los precios de tags quitados.');
+      }
+
       try {
         await supabase.from('configuracion_caracteristicas').delete().eq('configuracion_id', configId);
         if (form.caracteristicaIds.length > 0) {
@@ -680,7 +693,6 @@ export function ConfiguracionesClient({
 
       // servicios de transporte con valor fijo por configuración
       try {
-        await supabase.from('configuracion_servicios').delete().eq('configuracion_id', configId);
         const serviciosParaGuardar = form.servicioIds
           .map((servicio_id) => {
             const valor = form.servicioValores[servicio_id];
@@ -691,8 +703,14 @@ export function ConfiguracionesClient({
           })
           .filter((item): item is { configuracion_id: string; servicio_id: string; valor: number } => item !== null);
         if (serviciosParaGuardar.length > 0) {
-          await supabase.from('configuracion_servicios').insert(serviciosParaGuardar);
+          const { error } = await supabase.from('configuracion_servicios').upsert(serviciosParaGuardar, { onConflict: 'configuracion_id,servicio_id' });
+          if (error) throw error;
         }
+        const servicioIdsActivos = serviciosParaGuardar.map((item) => item.servicio_id);
+        let quitarServicios = supabase.from('configuracion_servicios').delete().eq('configuracion_id', configId);
+        if (servicioIdsActivos.length) quitarServicios = quitarServicios.not('servicio_id', 'in', `(${servicioIdsActivos.join(',')})`);
+        const { error: errorBorrado } = await quitarServicios;
+        if (errorBorrado) throw errorBorrado;
       } catch {
         console.warn('configuracion_servicios no encontrada. Ejecutar supabase/migrations/17_servicios_transporte.sql');
       }
@@ -709,7 +727,7 @@ export function ConfiguracionesClient({
 
   async function eliminar(id: string) {
     const { error } = await supabase.from('configuraciones_envio').delete().eq('id', id);
-    if (error) { toast({ variant: 'destructive', title: 'Error al eliminar.' }); return; }
+    if (error) { toast({ variant: 'destructive', title: 'Error al eliminar.', description: error.message }); return; }
     setConfigs((p) => p.filter((c) => c.id !== id));
     setEliminandoId(null);
     toast({ title: 'Configuración eliminada.' });
